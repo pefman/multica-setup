@@ -48,6 +48,17 @@ ROLES = {
     "helper": "Helper",
 }
 
+# Autopilots that only make sense with git repositories registered.
+# Enabled automatically when repos are given; the user is told either way.
+GIT_AP_DEFS = (
+    {"key": "pr-patrol", "name": "PR patrol", "assignee_role": "lead",
+     "mode": "create_issue", "cron": "30 9 * * *",
+     "issue_title": "PR patrol — {{date}}"},
+    {"key": "docs-check", "name": "Docs check", "assignee_role": "lead",
+     "mode": "create_issue", "cron": "30 17 * * *",
+     "issue_title": "Docs check — {{date}}"},
+)
+
 ROLE_BLURBS = {
     "lead": "Coordinates the team: triage, routing, tracking, delivery to the owner. Never implements.",
     "engineer": "Builds features and fixes in the registered repositories. Delivers as PRs.",
@@ -1093,7 +1104,13 @@ def _sync_project_repos(mc, pid, repos, plan):
     if not repos:
         return
     try:
-        cur = {r.get("url") for r in mc.project_resource_list(pid)}
+        cur = set()
+        for r in mc.project_resource_list(pid):
+            ref = r.get("resource_ref")
+            if isinstance(ref, dict) and ref.get("url"):
+                cur.add(ref["url"])
+            if r.get("url"):
+                cur.add(r["url"])
     except MulticaError:
         return
     missing = [u for u in repos if u not in cur]
@@ -1309,6 +1326,31 @@ def cmd_check(args):
                 report("ok", "GitHub CLI", "available for PR-based verification")
             else:
                 report("warn", "GitHub CLI", "not found — PR checks in reviews/deploys will be limited")
+
+            # repo reachability — this machine is only a proxy for the runtime
+            # machines, so failures are warnings, not failures
+            for url in manifest.project["repos"]:
+                label = url.split("://")[-1].rstrip("/")
+                try:
+                    r = subprocess.run(["git", "ls-remote", "--heads", url],
+                                       capture_output=True, text=True, timeout=15)
+                except (OSError, subprocess.SubprocessError) as e:
+                    report("warn", f"repo {label}", f"probe failed ({e}) — the runtime machine still needs access")
+                    continue
+                if r.returncode == 0:
+                    report("ok", f"repo {label}", "reachable from this machine")
+                else:
+                    detail = (r.stderr or r.stdout or "").strip().splitlines()
+                    report("warn", f"repo {label}",
+                           f"unreachable from this machine ({detail[0] if detail else 'git ls-remote failed'}) — the runtime machine still needs access")
+
+        # git autopilots hint — repos registered but the git runbooks missing
+        ap_keys = {a["key"] for a in manifest.autopilots}
+        missing_git = [d["key"] for d in GIT_AP_DEFS
+                       if manifest.project.get("repos") and d["key"] not in ap_keys]
+        if missing_git:
+            report("warn", "autopilots",
+                   f"repos are registered but {', '.join(missing_git)} is/are not in the manifest — add it/them for git watchkeeping")
 
     print("== " + ("PASS" if ok else "PASS (with warnings)" if ok else "FAIL"))
     return 0 if ok else 1
@@ -1911,6 +1953,17 @@ def cmd_init(args):
     p_desc = args.description or skeleton
     repos = list(args.repos or [])
 
+    if not auto and not repos:
+        print("\nGit repositories (the pr-patrol & docs-check autopilots need them):")
+        while True:
+            try:
+                line = input("  one URL per line, blank line to skip: ").strip()
+            except EOFError:
+                break
+            if not line:
+                break
+            repos.append(line)
+
     # ---- defaults summary ------------------------------------------------------
     all_roles = list(ROLES)
     tz = local_tz()
@@ -1921,7 +1974,12 @@ def cmd_init(args):
         {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
          "mode": "create_issue", "cron": "0 9 * * 1", "timezone": tz,
          "issue_title": "Board hygiene — {{date}}"},
+        {"key": "stall-radar", "name": "Stall radar", "assignee_role": "lead",
+         "mode": "create_issue", "cron": "0 13 * * 1-5", "timezone": tz,
+         "issue_title": "Stall radar — {{date}}"},
     )
+    if repos:
+        default_ap += tuple(dict(d, timezone=tz) for d in GIT_AP_DEFS)
     pool = [r for r in runtimes if r.get("status") == "online"] or runtimes
     default_rt = args.runtime or (pool[0]["provider"] if pool else "")
     taken_squads = set()
@@ -1951,6 +2009,12 @@ def cmd_init(args):
         else:
             for a in default_ap:
                 print(f"  autopilot:    {a['name']}  ({a['cron']}, {a['timezone']})")
+            if repos:
+                print("  note:         pr-patrol & docs-check are ON because git repos are registered")
+                print("                (your runtimes need git, plus gh for GitHub)")
+            else:
+                print("  note:         no git repos — pr-patrol & docs-check are OFF")
+                print("                (register repos to enable them)")
         if ws.get("mode") == "new" and len(ws["slug"]) < 4:
             print("  hint:         short slugs are often already taken globally on Multica Cloud — a longer, unique slug is safer")
         uses_defaults = ask_yesno("\nProceed with defaults? (n = customize)", True)
@@ -2041,18 +2105,28 @@ def cmd_init(args):
     ]
 
     # ---- autopilots ------------------------------------------------------------
+    for d in GIT_AP_DEFS:
+        if repos and not any(a["key"] == d["key"] for a in default_ap):
+            default_ap += (dict(d, timezone=tz),)
     aps = []
     if not args.no_autopilots:
         if auto or uses_defaults:
             aps = [dict(a) for a in default_ap]
         else:
-            picked = ask_toggle("Autopilots", ["daily-standup", "weekly-hygiene"],
-                                ["daily-standup", "weekly-hygiene"])
+            keys = [a["key"] for a in default_ap]
+            picked = ask_toggle("Autopilots", keys, keys)
             for key in picked:
-                ap = dict(default_ap[0 if key == "daily-standup" else 1])
+                ap = dict(next(a for a in default_ap if a["key"] == key))
                 ap["cron"] = ask(f"  {key} cron", ap["cron"])
                 ap["timezone"] = ask(f"  {key} timezone", ap["timezone"])
                 aps.append(ap)
+        if auto:
+            if repos:
+                print("note: git repos registered — pr-patrol & docs-check autopilots are enabled")
+                print("      (runtimes need git, plus gh for GitHub)")
+            else:
+                print("note: no git repos — pr-patrol & docs-check autopilots are off")
+                print("      (register repos to enable them)")
 
     if missing:
         print("init: missing required information for --auto mode:")

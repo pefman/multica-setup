@@ -16,8 +16,11 @@ automations — all created and kept in sync **through the `multica` CLI**.
   Every handoff is one structured comment (`Done / Evidence / Questions /
   Ask` + an exact `@mention`). Agents never merge, never deploy, never set
   `done` — **you** review, merge, and close.
-- **Automations** — a daily standup issue and a weekly board/repo hygiene
-  pass run themselves and report to you.
+- **Automations** — a weekday standup, a midday stall radar that nudges
+  quiet work, and a weekly board/repo hygiene pass run themselves and
+  report to you. Give it git repos and it adds a **PR patrol** (stale
+  PRs, branch cleanup) and a **docs check** (24h commits vs documentation)
+  — and tells you it did.
 
 ## Start here
 
@@ -27,10 +30,11 @@ automations — all created and kept in sync **through the `multica` CLI**.
 bin/multica-setup
 ```
 
-A menu appears. Pick **1) Start a new project**: you answer ~3 questions
-(workspace, project name), see exactly what will be created, and press
-Enter to proceed with the sensible defaults. When it's done, your team is
-live.
+A menu appears. Pick **1) Start a new project**: you answer ~4 questions
+(workspace, project name, git repos), see exactly what will be created,
+and press Enter to proceed with the sensible defaults. With git repos it
+also enables the **pr-patrol** and **docs-check** autopilots — and tells
+you so; without repos they stay off. When it's done, your team is live.
 
 ### Or, straight to the wizard / scripted
 
@@ -38,6 +42,7 @@ live.
 bin/multica-setup init                                              # guided, no menu
 bin/multica-setup init --auto --new-workspace "My Project" \
   --slug my-project --project "My Project" --runtime opencode \
+  --repos https://github.com/you/my-project \
   --roles lead,engineer,reviewer --smoke                            # scripts/CI, no prompts
 ```
 
@@ -117,6 +122,9 @@ project → autopilots. `smoke` then proves the flow with a throwaway issue.
   re-login/restart; `check` tells you.
 - **Piped input never auto-applies.** In a script, use `--auto` (explicit);
   interactively you get an "apply now?" prompt.
+- **Git autopilots need git in your runtime.** `pr-patrol` and `docs-check`
+  are enabled only when you give `init` repositories. Your runtime machines
+  need `git` (and `gh` for GitHub PR checks) installed.
 - **Nothing merges, ships, or closes without you.** That's the design,
   not a bug (see below).
 
@@ -165,5 +173,5 @@ never set `done`. The board is yours to move at the end of the line.
 | `roles/` | Instruction templates per role (rendered into each agent) |
 | `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
 | `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
-| `autopilots/` | Runbooks: `daily-standup`, `weekly-hygiene` |
+| `autopilots/` | Runbooks: `daily-standup`, `stall-radar`, `weekly-hygiene`, `pr-patrol`*, `docs-check`* (*git repos required) |
 | `docs/` | `how-it-works.md`, `flow.md`, `runbook.md` |

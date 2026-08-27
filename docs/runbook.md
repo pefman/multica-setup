@@ -56,6 +56,27 @@ of the team. To reuse a hand-tuned manifest instead, copy it, point it at
 the new workspace, adjust `project` + `repos`, run `check` → `plan` →
 `apply`.
 
+## The autopilots (what runs on its own)
+
+| Runbook | Schedule (default) | What it does | Needs |
+|---|---|---|---|
+| `daily-standup` | weekdays 08:30 | Board report: counts, in-flight, blocked, "waiting on you", decisions needed | — |
+| `stall-radar` | weekdays 13:00 | Nudges quiet `in_progress`/`blocked` issues **on their own issue** (@ the owner agent); escalates to you what it can't unblock | — |
+| `weekly-hygiene` | Monday 09:00 | Board↔merged-PR reconciliation, stale flags, repo hygiene pass, runtime disk usage | repos for the repo pass |
+| `pr-patrol` | daily 09:30 | Open PRs unmerged > 3d → @ author; unreviewed > 24h → nudge reviewer; **deletes branches of merged PRs** (safe); closed-unmerged > 14d and orphan branches → listed for your approval, never deleted | repos, `git` (+ `gh` for GitHub) in the runtime |
+| `docs-check` | daily 17:30 | 24h commit window vs README/docs/CHANGELOG; one `backlog` issue per concrete docs gap | repos, `git` in the runtime |
+
+`init` always enables standup, stall-radar, and hygiene; **pr-patrol and
+docs-check are enabled only when you give it git repositories** — it tells
+you which case happened ("…are ON because git repos are registered" /
+"…are OFF (register repos to enable them)"). `check` reminds you if repos
+are registered but the git runbooks are missing from the manifest, and
+warns if a repo is unreachable from your machine (the runtime machines may
+still reach it — it's a probe, not a verdict).
+
+To change schedules/selection: edit the manifest's `autopilots` list
+(or the wizard's customize path, `n`), re-`apply`.
+
 ## The menu (bare `bin/multica-setup`)
 
 Lists **live workspaces from the multica CLI** (the source of truth).

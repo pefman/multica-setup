@@ -85,8 +85,14 @@ update them later with `multica skill refresh <id>`.
 | `timezone` | yes | IANA timezone, e.g. `Europe/Stockholm`. |
 | `issue_title` | if `create_issue` | Title template for created issues; only `{{date}}` (UTC, `YYYY-MM-DD`) is interpolated. |
 
-Available in this repo: `daily-standup` (morning board report by the lead)
-and `weekly-hygiene` (board + repo + disk maintenance pass, report-only).
+Available in this repo: `daily-standup` (weekday morning board report by
+the lead), `stall-radar` (weekday midday: nudges quiet in-flight issues on
+their own issue), `weekly-hygiene` (board + repo + disk maintenance pass),
+and the git runbooks `pr-patrol` (stale open/unreviewed PRs, deletes
+branches of merged PRs, lists other branch-cleanup candidates for approval)
+and `docs-check` (24h commit window vs docs; one backlog issue per gap).
+`init` enables the git two automatically when you give it repositories,
+and tells you which case happened.
 
 ## Conventions the manifest bakes in
 
