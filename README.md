@@ -175,3 +175,4 @@ never set `done`. The board is yours to move at the end of the line.
 | `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
 | `autopilots/` | Runbooks: `daily-standup`, `stall-radar`, `weekly-hygiene`, `pr-patrol`*, `docs-check`* (*git repos required) |
 | `docs/` | `how-it-works.md`, `flow.md`, `runbook.md` |
+| `llms.txt` | Guide for AI assistants editing this repository (repo map, editing rules, verification, conventions) |

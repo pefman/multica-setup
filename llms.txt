@@ -1,0 +1,111 @@
+# llms.txt — guide for AI assistants working on this repository
+
+## What this is
+
+multica-setup bootstraps a project team in [Multica](https://multica.ai):
+a squad of agent teammates, a kanban flow with explicit handoffs, and
+recurring automations. The entire tool is **one Python file**
+(`bin/multica-setup`, standard library only, Python 3.10+) that drives
+Multica exclusively through the `multica` CLI — it never calls any API
+directly.
+
+## Repository map
+
+| Path | What it is |
+|---|---|
+| `bin/multica-setup` | The CLI (~2500 lines). Bare run = interactive menu; subcommands `init / check / plan / apply / status / smoke / teardown` |
+| `templates/project.example.json` | A complete runnable manifest |
+| `templates/project.schema.md` | Field reference for manifests — keep it in sync with the code |
+| `roles/<role>.md` | Per-role agent instructions, rendered into each agent |
+| `skills/<name>/SKILL.md` | Shared skills (frontmatter `name:` + `description:`, then markdown) |
+| `squad/squad-instructions.md` | Squad routing/handoff/sign-off instructions |
+| `autopilots/<key>.md` | Runbooks rendered into autopilot descriptions |
+| `docs/runbook.md` | Operations + troubleshooting — keep current with behavior changes |
+| `docs/how-it-works.md`, `docs/flow.md` | Design and the kanban/handoff contract |
+| `README.md` | User-facing; "Good to know" must reflect real behavior |
+
+## How the pieces connect
+
+manifest (JSON spec) → `Manifest` dataclass → `build_context()` →
+`render()` → `Multica` client (subprocess calls to `multica ...
+--workspace-id ... --output json`) → `Plan` (dry = plan, else apply) →
+steps in order: workspace → skills → agents → squad → project →
+autopilots.
+
+- `render()` substitutes `{{placeholder}}` strictly: a placeholder missing
+  from the context, or one left unrendered, raises `ManifestError`. The
+  context keys are exactly: `project_name`, `project_description`,
+  `repo_list`, `squad_name`, `issue_prefix`, `roster`, `routing_table`,
+  `routing_bullets`, and `<role>_name` for every role.
+- The spec lives in a local `<workspace>.json` file or inside Multica
+  (in `--in-project` mode it is stored in the managed project's
+  description as an HTML comment block and read back via
+  `multica project list`).
+- `plan` is a dry `apply`; both diff spec vs live CLI state, so re-runs
+  are no-ops when nothing drifted.
+
+## Editing rules for AI
+
+`bin/multica-setup`:
+- No dependencies, no type hints, no comments except
+  `# ---- section ----` banners. Match the existing style; keep
+  functions small.
+- After ANY edit run:
+  `python3 -c "import ast; ast.parse(open('bin/multica-setup').read())"`
+- The `Multica` client methods wrap CLI calls and `unwrap_list()` JSON
+  envelopes; `MulticaError` wraps non-zero exits with the CLI's stderr.
+
+Add a **role**: `ROLES` + `ROLE_BLURBS` (top of the file) +
+`roles/<key>.md` + entries in `ROUTE_TABLE`/`ROUTE_BULLETS` and the
+`attach_to` lists in `cmd_init`'s `skills` + a line in
+`templates/project.schema.md` and the README. `lead` is the only
+required role — new roles must be optional.
+
+Add an **autopilot runbook**: `autopilots/<key>.md` in the house voice
+(address the project owner; `## Steps` numbered; `## Boundaries`
+explicit; output is ONE comment on the autopilot's own issue; on broken
+tooling post the failure and stop, never retry-loop) + a line in
+`templates/project.schema.md` + the repo map in README + the table in
+`docs/runbook.md`. Defaults live in `cmd_init` (`default_ap`; git-only
+runbooks in `GIT_AP_DEFS`, enabled only when repos are registered).
+
+Add a **skill**: `skills/<name>/SKILL.md` (frontmatter `name:` +
+`description:`) + the manifest's `skills` list (`source: local` or `url`,
+`attach_to: all` or a role list).
+
+Calibrated CLI quirks the code depends on (multica 0.4.x — re-verify
+after CLI upgrades):
+- `autopilot list --output json` = `{"autopilots": [...]}`; entries carry
+  `title`, not `name`
+- `autopilot get` = `{"autopilot": {...}, "collaborators": [...],
+  "triggers": [...]}` (schedule trigger under `triggers`)
+- `issue list --output json` = `{"issues": [...], "total": ...}`
+- project resources store the URL under `resource_ref.url`
+- agents carry `archived_at`; teardown archives (the CLI cannot delete),
+  re-apply restores via `agent restore <id>` — never re-create archived
+  names
+- workspace slugs on Multica Cloud are globally unique across all users
+
+## Verification before committing
+
+1. Parse check (above).
+2. `--manifest <file> plan` on a throwaway manifest (dry, no side effects).
+3. For behavior changes: full E2E on a **scratch** workspace —
+   `bin/multica-setup init --auto --new-workspace "<name>" --slug
+   <random> --project "<name>" --runtime opencode` → verify via the
+   `multica` CLI → `--workspace <slug> ... teardown --yes` → ask the user
+   to delete the workspace shell in the web UI.
+4. NEVER run `apply`/`teardown` against a production workspace
+   (e.g. the user's real projects) without explicit instruction.
+
+## Repository conventions
+
+- Commit identity via environment variables only (never touch git
+  config): `GIT_AUTHOR_NAME="Peter Frank" GIT_AUTHOR_EMAIL="info@peterfrank.se"`
+  and the same for `GIT_COMMITTER_*`.
+- Tag a release per coherent feature batch: `git tag -a <version> -m
+  "multica-setup <version>: <summary>"`, push `origin main <tag>`.
+- Never commit user files that appear in the working tree; stage exactly
+  the files you changed.
+- Keep `README.md` ("Good to know", repo map), `docs/runbook.md`, and
+  `templates/project.schema.md` consistent with any behavior change.
