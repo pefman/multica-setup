@@ -33,9 +33,12 @@ at once:
 ## Quickstart
 
 ```bash
-# Answer a few questions: workspace, project, team, runtimes, automations.
-# Writes <workspace-slug>.json, runs check + plan (read-only), then asks
-# whether to apply and smoke.
+# Just run it — it shows a menu and asks the questions:
+# new project (guided wizard), or pick an existing manifest
+# (check / plan / apply / status / smoke / teardown).
+bin/multica-setup
+
+# Or go straight to the wizard:
 bin/multica-setup init
 
 # Non-interactive (scripts/CI) — same result, no prompts:
@@ -70,7 +73,7 @@ Prefer to hand-maintain a manifest instead of the guided `init`? Copy
 
 | Path | What it is |
 |---|---|
-| `bin/multica-setup` | The bootstrap CLI (`init / check / plan / apply / status / smoke / teardown`) |
+| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
 | `templates/` | Manifest example + field reference |
 | `roles/` | Instruction templates per role (rendered into each agent) |
 | `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |

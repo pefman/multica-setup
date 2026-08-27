@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """multica-setup — bootstrap a working Multica project team.
 
+Run it bare for the interactive menu (new project wizard, or pick an
+existing manifest to check/plan/apply/status/smoke/teardown), or use a
+subcommand directly.
+
 Reads a project manifest (see templates/project.schema.md) and creates or
 updates the whole setup through the `multica` CLI: workspace, repositories,
 skills, agents, squad, project, and autopilots.
@@ -1264,7 +1268,10 @@ def cmd_status(args):
     if ws_id:
         mc.workspace_id = ws_id
     slug = manifest.workspace.get("slug") if manifest else args.workspace or "(profile default)"
-    print(f"== multica-setup: status — workspace {slug} ==")
+    note = ""
+    if manifest and manifest.workspace.get("mode") == "new" and not ws_id:
+        note = " (not created yet — showing profile default workspace)"
+    print(f"== multica-setup: status — workspace {slug}{note} ==")
     try:
         d = mc.daemon_status()
         if d and d.get("status") == "running":
@@ -1313,8 +1320,12 @@ def cmd_status(args):
 
     try:
         issues = mc.j(["issue", "list", "--limit", "200"])
+        if isinstance(issues, dict):
+            issues = issues.get("issues") or []
         counts = {}
         for i in issues:
+            if not isinstance(i, dict):
+                continue
             counts[i.get("status", "?")] = counts.get(i.get("status", "?"), 0) + 1
         if counts:
             print("issues: " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
@@ -1572,6 +1583,7 @@ def ask_toggle(prompt, names, defaults):
 
 def pick_runtime(role_label, runtimes, auto, fixed=None, missing=None):
     """Returns the runtime spec string for a role; '' if undetermined (auto mode)."""
+    global _stdin_eof
     if fixed:
         return fixed
     if runtimes:
@@ -1876,14 +1888,134 @@ def cmd_init(args):
     return 0
 
 
+def discover_manifests(dirpath="."):
+    """(path, manifest) pairs for every loadable manifest in dirpath."""
+    out = []
+    for p in sorted(Path(dirpath).glob("*.json")):
+        try:
+            out.append((p, load_manifest(p)))
+        except ManifestError:
+            continue
+    return out
+
+
+def menu_init_wizard():
+    args = argparse.Namespace(auto=False, workspace=None, new_workspace=None, slug=None,
+                              issue_prefix=None, workspace_description=None, project=None,
+                              description=None, repos=None, roles=None, runtime=None,
+                              model=None, squad=None, no_autopilots=False, no_apply=False,
+                              smoke=False, out=None, force=True, profile=None, state=None,
+                              manifest=None, timeout=600, poll=10)
+    return cmd_init(args)
+
+
+def run_project_submenu(path, profile=None):
+    """check/plan/apply/status/smoke/teardown loop for one manifest."""
+    handlers = {"check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
+                "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
+    while True:
+        try:
+            man = load_manifest(path)
+        except ManifestError as e:
+            print(f"  manifest no longer loadable: {e}")
+            return
+        ws = man.workspace.get("slug") or man.workspace.get("name") or "?"
+        proj = man.project.get("name", "?")
+        print(f"\n== {path.name} — workspace {ws}, project {proj} ==")
+        print("  1) check   2) plan   3) apply   4) status   5) smoke   6) teardown   b) back")
+        try:
+            v = input("action [1-6/b]: ").strip().lower()
+        except EOFError:
+            return
+        if v in ("b", "back", "q", "quit"):
+            return
+        if not v:
+            continue
+        if v not in ("1", "2", "3", "4", "5", "6"):
+            print("  (pick 1-6 or b)")
+            continue
+        name = {"1": "check", "2": "plan", "3": "apply", "4": "status",
+                "5": "smoke", "6": "teardown"}[v]
+        yes = False
+        if name == "teardown":
+            if not ask_yesno("  archive everything this tool created in this workspace?", False):
+                print("  (teardown cancelled)")
+                continue
+            yes = True
+        args = argparse.Namespace(manifest=str(path), workspace=None, profile=profile,
+                                  state=None, timeout=600, poll=10, yes=yes)
+        try:
+            handlers[name](args)
+        except (ManifestError, MulticaError) as e:
+            print(f"error: {e}")
+
+
+def interactive_menu(preset_manifest=None, profile=None):
+    if preset_manifest:
+        run_project_submenu(Path(preset_manifest).expanduser(), profile)
+    while True:
+        print("\n" + "-" * 52)
+        print("multica-setup — bootstrap & manage Multica project teams")
+        print("-" * 52)
+        found = discover_manifests()
+        print("  1) Start a new project")
+        if found:
+            print("  2) Work with an existing project")
+            for i, (p, m) in enumerate(found, 1):
+                ws = m.workspace.get("slug") or m.workspace.get("name") or "?"
+                print(f"     [{i}] {p.name}  (workspace {ws})")
+        else:
+            print("  2) Work with an existing project  (none found in this directory)")
+        print("  q) Quit")
+        try:
+            v = input("\nchoice [1/2/q]: ").strip().lower()
+        except EOFError:
+            print("\nno interactive input. For direct runs use:")
+            print("  bin/multica-setup init        # guided wizard")
+            print("  bin/multica-setup --help      # all subcommands")
+            return 0
+        if v in ("q", "quit", "exit"):
+            print("bye")
+            return 0
+        if v in ("", "1"):
+            try:
+                menu_init_wizard()
+            except (ManifestError, MulticaError) as e:
+                print(f"error: {e}")
+        elif v == "2":
+            target = None
+            if len(found) == 1:
+                target = found[0][0]
+            elif found:
+                mv = ask("manifest (number or path)", "")
+                if not mv:
+                    continue
+                if mv.isdigit() and 1 <= int(mv) <= len(found):
+                    target = found[int(mv) - 1][0]
+                else:
+                    target = Path(mv).expanduser()
+                    if not target.exists():
+                        print(f"  no such file: {target}")
+                        continue
+            else:
+                target = Path(ask_required("manifest path")).expanduser()
+                if not target.exists():
+                    print(f"  no such file: {target}")
+                    continue
+            run_project_submenu(target, profile)
+        else:
+            print("  (1, 2, or q)")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="multica-setup",
-                                 description="Bootstrap a working Multica project team via the multica CLI.")
+                                 description="Bootstrap a working Multica project team via the multica CLI. "
+                                              "With no subcommand, runs the interactive menu.")
     ap.add_argument("--manifest", help="path to project manifest JSON")
     ap.add_argument("--workspace", help="override target workspace (slug or ID)")
     ap.add_argument("--profile", help="multica CLI profile to use")
     ap.add_argument("--state", help="state file path (default: <manifest dir>/.multica-bootstrap-state.json)")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
 
     ini = sub.add_parser("init", help="interactive: author a manifest, then check/plan/apply/smoke")
     ini.add_argument("--new-workspace", help="create a new workspace with this name")
@@ -1915,6 +2047,9 @@ def main(argv=None):
     st.add_argument("--yes", action="store_true", help="actually do it")
 
     args = ap.parse_args(argv)
+    if args.cmd is None:
+        # no subcommand: run the interactive menu (--manifest jumps straight in)
+        return interactive_menu(preset_manifest=args.manifest, profile=args.profile)
     if args.cmd not in ("status", "check", "init") and not args.manifest:
         ap.error(f"--manifest is required for '{args.cmd}'")
     if args.cmd == "check" and not args.manifest and not args.workspace:
