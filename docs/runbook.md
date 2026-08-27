@@ -62,8 +62,11 @@ Lists **live workspaces from the multica CLI** (the source of truth).
 Local `*.json` specs in the directory are only shown as annotations
 (`manifest: <file>`); specs whose workspace is not in this account land
 under "local specs with no workspace in this account" and are driven with
-`--manifest <file>`. A workspace without a local spec can be viewed
-(read-only status) and adopted with `bin/multica-setup init --workspace <slug>`.
+`--manifest <file>`. A workspace without a local spec lists its
+multica-setup-managed projects (spec read back from the project
+description via the CLI); with none of either it offers read-only status
+and adoption via `bin/multica-setup init --workspace <slug>` (add
+`--in-project` to keep the spec in Multica instead of a local file).
 
 ## Troubleshooting
 
@@ -86,6 +89,13 @@ workspace and will never appear in your `workspace list` (so no pre-flight
 can see them either). Pick a longer, unique slug in the manifest and
 re-run `apply` — or if you meant to manage an existing workspace,
 `bin/multica-setup init --workspace <slug>`.
+
+**Re-initializing a torn-down team in the same workspace**
+Teardown *archives* agents (the CLI cannot delete them), and archived
+agents keep their names reserved. `apply`/`init` handle this automatically:
+archived agents are **restored** and re-synced. If you ever see
+"an agent named X already exists" instead, your tool is older than 1.5 —
+or the name belongs to a non-archived agent you manage yourself.
 
 **A run fails**
 `multica issue runs <ISSUE>` → open the failed run → `run-messages` shows

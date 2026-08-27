@@ -50,6 +50,12 @@ bin/multica-setup init
 bin/multica-setup init --auto --new-workspace "My Project" \
   --slug my-project --project "My Project" --runtime opencode \
   --roles lead,engineer,reviewer --smoke
+
+# Zero local files: store the spec in the project's description (in Multica):
+bin/multica-setup init --auto --in-project --new-workspace "My Project" \
+  --slug my-project --project "My Project" --runtime opencode
+# ...then manage it with:
+bin/multica-setup --workspace my-project --project "My Project" apply
 ```
 
 If you stopped before `apply` (or ran with `--no-apply`), pick it up later
@@ -59,6 +65,9 @@ with the manifest `init` wrote:
 bin/multica-setup --manifest my-project.json apply   # idempotent — safe to re-run
 bin/multica-setup --manifest my-project.json smoke   # prove the flow end-to-end
 ```
+
+(`--in-project` projects are picked up the same way, by workspace + project
+name instead of a file — or straight from the bare-run menu.)
 
 Then start working: create issues in the workspace and assign them to the
 squad (or directly to an agent when the owner is obvious). You will be
@@ -76,11 +85,19 @@ Prefer to hand-maintain a manifest instead of the guided `init`? Copy
 
 **Manifests are your spec, not your state.** The `multica` CLI is the only
 source of truth for what exists in Multica — every command asks it live.
-The `<workspace>.json` file the wizard writes is a local *desired-state*
-specification (think terraform file): git-track it, edit it, re-apply.
-The bare-run menu lists live workspaces from the CLI and shows local
-specs only as annotations; a workspace you want managed needs a spec for
-it (written by `init`, or `init --workspace <slug>` to adopt an existing one).
+The *spec* (workspace, project, team, runtimes, autopilots) can live in two
+places:
+
+- **a local manifest file** (`<workspace>.json`, written by `init`) — a
+  desired-state specification you git-track and re-apply from, like a
+  terraform file; or
+- **inside Multica itself** (`init --in-project`) — the spec is stored in
+  the managed project's description and read back through the CLI, so
+  there are no local files at all and anyone with the CLI can manage the
+  project: `bin/multica-setup --workspace <slug> --project <name> <command>`.
+
+Either way the spec is never data *about* Multica — it's your instructions
+for what to create. `plan`/`apply` diff it against live CLI state.
 
 ## Repository map
 

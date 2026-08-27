@@ -177,8 +177,11 @@ class Multica:
         return self.j(["skill", "import", "--url", url, "--on-conflict", "skip"])
 
     # -- agents ---------------------------------------------------------------
-    def agent_list(self):
-        return self.j(["agent", "list"]) or []
+    def agent_list(self, include_archived=False):
+        args = ["agent", "list"]
+        if include_archived:
+            args.append("--include-archived")
+        return self.j(args) or []
 
     def agent_create(self, name, runtime_id, instructions, description=None, model=None,
                      thinking_level=None, max_concurrent_tasks=None):
@@ -218,6 +221,9 @@ class Multica:
 
     def agent_archive(self, aid):
         return self.j(["agent", "archive", aid])
+
+    def agent_restore(self, aid):
+        return self.j(["agent", "restore", aid])
 
     def agent_skills_set(self, aid, skill_ids):
         if not skill_ids:
@@ -422,14 +428,7 @@ class Manifest:
         return [r for r in self.roles if r.get("in_squad", True)]
 
 
-def load_manifest(path: Path) -> Manifest:
-    if not path.exists():
-        raise ManifestError(f"manifest not found: {path}")
-    try:
-        raw = json.loads(path.read_text())
-    except json.JSONDecodeError as e:
-        raise ManifestError(f"manifest is not valid JSON: {e}")
-
+def parse_manifest(raw: dict, path=None) -> Manifest:
     ws = raw.get("workspace")
     if not ws or ws.get("mode") not in ("existing", "new"):
         raise ManifestError("workspace.mode must be 'existing' or 'new'")
@@ -494,7 +493,85 @@ def load_manifest(path: Path) -> Manifest:
         })
 
     return Manifest(workspace=ws, project=project, team=team,
-                    autopilots=autopilots, path=path)
+                    autopilots=autopilots, path=path or Path("."))
+
+
+def load_manifest(path: Path) -> Manifest:
+    if not path.exists():
+        raise ManifestError(f"manifest not found: {path}")
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ManifestError(f"manifest is not valid JSON: {e}")
+    return parse_manifest(raw, path)
+
+
+# ---- spec storage: local file, or inside Multica (project description) ----
+SPEC_TAG = "multica-setup-spec"
+
+
+def spec_block(spec_dict):
+    return f"<!-- {SPEC_TAG} v1\n{json.dumps(spec_dict, indent=2, ensure_ascii=False)}\n-->"
+
+
+def split_description(desc):
+    """(human text, spec dict or None) — the spec rides in an HTML comment."""
+    text = desc or ""
+    m = re.search(r"<!--\s*" + SPEC_TAG + r" v1\n(.*?)\n-->", text, re.S)
+    if not m:
+        return text, None
+    human = (text[: m.start()] + text[m.end():]).strip()
+    try:
+        return human, json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return text, None
+
+
+def store_description(human_text, spec_dict):
+    return f"{(human_text or '').strip()}\n\n{spec_block(spec_dict)}"
+
+
+def get_spec(args):
+    """(manifest, spec dict, mode) for --manifest, --workspace, or injected.
+
+    mode is 'file', 'cli', or 'injected' (init --in-project hands the spec
+    to the chain in memory before the project exists)."""
+    injected = getattr(args, "_spec", None)
+    if injected:
+        return injected[0], injected[1], "injected"
+    if getattr(args, "manifest", None):
+        path = Path(args.manifest)
+        return load_manifest(path), json.loads(path.read_text()), "file"
+    if not getattr(args, "workspace", None):
+        raise ManifestError("nothing to look up — pass --manifest <file> or --workspace <slug>")
+    mc = make_mc(args)
+    ws_id = target_workspace_id(mc, args, None)
+    mc_ws = Multica(workspace_id=ws_id, profile=args.profile)
+    for p in mc_ws.project_list():
+        if getattr(args, "project", None) and p.get("title") != args.project:
+            continue
+        _, spec = split_description(p.get("description") or "")
+        if spec is None:
+            continue
+        return parse_manifest(spec), spec, "cli"
+    where = (f"workspace '{args.workspace}'"
+             + (f" / project '{args.project}'" if getattr(args, "project", None) else ""))
+    raise ManifestError(f"no multica-setup-managed project in {where} "
+                        f"(managed projects carry their spec in the project description)")
+
+
+def list_managed_projects(slug, profile=None):
+    """Project titles in the workspace whose description carries a spec."""
+    probe = argparse.Namespace(profile=profile, workspace=slug)
+    mc = make_mc(probe)
+    ws_id = target_workspace_id(mc, probe, None)
+    mc_ws = Multica(workspace_id=ws_id, profile=profile)
+    out = []
+    for p in mc_ws.project_list():
+        _, spec = split_description(p.get("description") or "")
+        if spec is not None:
+            out.append(p.get("title"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +825,7 @@ def step_skills(mc, manifest, plan):
                 sid = existing[name]["id"]
                 ids[name] = sid
                 if plan.dry:
-                    plan.log("update", f"skill {name}", "re-sync content + files")
+                    plan.log("update", f"skill {name}", "re-sync content + files (always re-pushed)")
                 else:
                     plan.log("update", f"skill {name}", "re-sync content + files")
                     tmp = write_tmp(body)
@@ -817,7 +894,7 @@ def extract_id(obj):
 
 def step_agents(mc, manifest, skill_ids, plan):
     runtimes = mc.runtime_list()
-    existing = {a.get("name"): a for a in mc.agent_list()}
+    existing = {a.get("name"): a for a in mc.agent_list(include_archived=True)}
     ctx = build_context(manifest)
     ids = {}
     for role in manifest.roles:
@@ -837,6 +914,12 @@ def step_agents(mc, manifest, skill_ids, plan):
 
         if rspec["name"] in existing:
             a = existing[rspec["name"]]
+            if a.get("archived_at"):
+                if plan.dry:
+                    plan.log("update", f"agent {rspec['name']}",
+                             f"restore (archived) + {rt_note}")
+                else:
+                    mc.agent_restore(a["id"])
             changes = []
             if (a.get("instructions") or "") != instructions:
                 changes.append("instructions")
@@ -918,7 +1001,7 @@ def step_squad(mc, manifest, agent_ids, plan):
         s = existing[name]
         sid = s["id"]
         if plan.dry:
-            plan.log("update", f"squad {name}", f"leader {lead_name}, {len(members)} members, instructions")
+            plan.log("update", f"squad {name}", f"leader {lead_name}, {len(members)} members, instructions (always re-synced)")
         else:
             plan.log("update", f"squad {name}", "sync leader/members/instructions")
             cur_leader = s.get("leader_id")
@@ -947,7 +1030,7 @@ def step_squad(mc, manifest, agent_ids, plan):
     return sid
 
 
-def step_project(mc, manifest, agent_ids, plan):
+def step_project(mc, manifest, agent_ids, plan, spec=None):
     p = manifest.project
     title = p["name"]
     repos = p.get("repos", [])
@@ -958,8 +1041,15 @@ def step_project(mc, manifest, agent_ids, plan):
         proj = existing[title]
         pid = proj["id"]
         changes = []
-        if (proj.get("description") or "") != p["description"]:
-            changes.append("description")
+        if spec is None:
+            if (proj.get("description") or "") != p["description"]:
+                changes.append("description")
+        else:
+            stored_human, stored_spec = split_description(proj.get("description") or "")
+            if stored_human != (p["description"] or "").strip():
+                changes.append("description")
+            elif stored_spec != spec:
+                changes.append("spec (embedded in description)")
         if lead_id and proj.get("lead_id") and proj["lead_id"] != lead_id:
             changes.append("lead")
         if changes:
@@ -968,8 +1058,9 @@ def step_project(mc, manifest, agent_ids, plan):
             else:
                 plan.log("update", f"project {title}", ", ".join(changes))
                 upd = {}
-                if "description" in changes:
-                    upd["description"] = p["description"]
+                if any(c.startswith("description") or c.startswith("spec") for c in changes):
+                    upd["description"] = (store_description(p["description"], spec)
+                                          if spec is not None else p["description"])
                 if "lead" in changes and lead_name:
                     upd["lead"] = lead_name
                 mc.project_update(pid, **upd)
@@ -982,7 +1073,8 @@ def step_project(mc, manifest, agent_ids, plan):
         plan.log("create", f"project {title}", detail)
     else:
         plan.log("create", f"project {title}", detail)
-        created = mc.project_create(title, p["description"], lead=lead_name, repos=repos)
+        desc = store_description(p["description"], spec) if spec is not None else p["description"]
+        created = mc.project_create(title, desc, lead=lead_name, repos=repos)
         pid = extract_id(created)
         if not pid:
             for x in mc.project_list():
@@ -1016,7 +1108,7 @@ def _sync_project_repos(mc, pid, repos, plan):
 
 def step_autopilots(mc, manifest, agent_ids, project_id, plan):
     ctx = build_context(manifest)
-    existing = {a.get("name"): a for a in mc.autopilot_list()}
+    existing = {(a.get("name") or a.get("title")): a for a in mc.autopilot_list()}
     names = manifest.agent_names_by_role()
     for ap in manifest.autopilots:
         assignee = names.get(ap["assignee_role"], "")
@@ -1024,27 +1116,46 @@ def step_autopilots(mc, manifest, agent_ids, project_id, plan):
         if ap["name"] in existing:
             a = existing[ap["name"]]
             aid = a["id"]
-            if plan.dry:
-                plan.log("update", f"autopilot {ap['name']}",
-                         f"assignee {assignee}, cron {ap['cron']} {ap['timezone']}")
-            else:
-                plan.log("update", f"autopilot {ap['name']}", "sync runbook/trigger")
-                det = mc.autopilot_get(aid)
-                if (det.get("description") or "") != runbook:
-                    mc.autopilot_update(aid, description=runbook)
-                if ap["mode"] == "create_issue" and ap.get("issue_title"):
-                    if (det.get("issue_title_template") or "") != ap["issue_title"]:
+            raw = mc.autopilot_get(aid)
+            det = raw.get("autopilot") if isinstance(raw, dict) and "autopilot" in raw else raw
+            det = det or {}
+            triggers = (raw.get("triggers") or []) if isinstance(raw, dict) else []
+            diffs = []
+            need_runbook = (det.get("description") or "") != runbook
+            if need_runbook:
+                diffs.append("runbook")
+            need_title = (ap["mode"] == "create_issue" and ap.get("issue_title")
+                          and (det.get("issue_title_template") or "") != ap["issue_title"])
+            if need_title:
+                diffs.append("issue title")
+            need_project = (project_id and (det.get("project_id") in (None, "")
+                                            or det.get("project_id") != project_id))
+            if need_project:
+                diffs.append("project")
+            sched = next((t for t in triggers if t.get("kind") == "schedule"), None)
+            need_trigger_add = sched is None
+            need_trigger_upd = (not need_trigger_add and (
+                sched.get("cron_expression") != ap["cron"] or sched.get("timezone") != ap["timezone"]))
+            if need_trigger_add:
+                diffs.append("schedule trigger")
+            elif need_trigger_upd:
+                diffs.append(f"schedule {sched.get('cron_expression')} → {ap['cron']} {ap['timezone']}")
+            if diffs:
+                plan.log("update", f"autopilot {ap['name']}", ", ".join(diffs))
+                if not plan.dry:
+                    if need_runbook:
+                        mc.autopilot_update(aid, description=runbook)
+                    if need_title:
                         mc.autopilot_update(aid, issue_title=ap["issue_title"])
-                if project_id and (det.get("project_id") in (None, "") or det.get("project_id") != project_id):
-                    mc.autopilot_update(aid, project_id=project_id)
-                triggers = det.get("triggers") or []
-                sched = next((t for t in triggers if t.get("kind") == "schedule"), None)
-                if sched is None:
-                    mc.autopilot_trigger_add(aid, ap["cron"], ap["timezone"], label=ap["name"])
-                elif (sched.get("cron_expression") != ap["cron"]
-                      or sched.get("timezone") != ap["timezone"]):
-                    mc.autopilot_trigger_update(aid, sched["id"], cron=ap["cron"],
-                                                timezone=ap["timezone"])
+                    if need_project:
+                        mc.autopilot_update(aid, project_id=project_id)
+                    if need_trigger_add:
+                        mc.autopilot_trigger_add(aid, ap["cron"], ap["timezone"], label=ap["name"])
+                    elif need_trigger_upd:
+                        mc.autopilot_trigger_update(aid, sched["id"], cron=ap["cron"],
+                                                   timezone=ap["timezone"])
+            else:
+                plan.ok(f"autopilot {ap['name']}", f"cron {ap['cron']} {ap['timezone']}")
             continue
         detail = (f"assignee {assignee}, {ap['mode']}, cron {ap['cron']} {ap['timezone']}")
         if plan.dry:
@@ -1138,7 +1249,14 @@ def cmd_check(args):
     except MulticaError as e:
         report("warn", "daemon", str(e).splitlines()[0])
 
-    manifest = load_manifest(Path(args.manifest)) if args.manifest else None
+    manifest = None
+    if args.manifest:
+        manifest = load_manifest(Path(args.manifest))
+    else:
+        try:
+            manifest, _, _ = get_spec(args)
+        except ManifestError:
+            pass  # no managed project here — check CLI/auth/daemon only
     ws_id = None
     if manifest:
         # workspace
@@ -1196,7 +1314,7 @@ def cmd_check(args):
     return 0 if ok else 1
 
 
-def run_apply(mc, args, manifest, dry):
+def run_apply(mc, args, manifest, spec=None, dry=False):
     plan = Plan(dry)
     print(f"== multica-setup: {'plan' if dry else 'apply'} for "
           f"{'workspace ' + (manifest.workspace.get('slug') or '?')} — {manifest.project['name']} ==")
@@ -1236,25 +1354,31 @@ def run_apply(mc, args, manifest, dry):
     skill_ids = step_skills(mc, manifest, plan)
     agent_ids = step_agents(mc, manifest, skill_ids, plan)
     step_squad(mc, manifest, agent_ids, plan)
-    project_id = step_project(mc, manifest, agent_ids, plan)
+    project_id = step_project(mc, manifest, agent_ids, plan, spec)
     step_autopilots(mc, manifest, agent_ids, project_id, plan)
 
     if not dry:
-        state = load_state(state_path_for(manifest, args.state))
-        state.update({
-            "workspace_slug": manifest.workspace.get("slug"),
-            "workspace_id": ws_id if ws_id and not str(ws_id).startswith("dry") else None,
-            "project_id": project_id,
-            "created": {
-                "agents": {n: i for n, i in agent_ids.items()},
-                "squad_name": manifest.team["squad_name"],
-                "skill_names": [s["name"] for s in manifest.team.get("skills", [])
-                                if s["source"] == "local"],
-                "autopilot_names": [a["name"] for a in manifest.autopilots],
-            },
-        })
-        save_state(state_path_for(manifest, args.state), state)
-        print(f"\nstate saved: {state_path_for(manifest, args.state)}")
+        if spec is None:
+            state = load_state(state_path_for(manifest, args.state))
+            state.update({
+                "workspace_slug": manifest.workspace.get("slug"),
+                "workspace_id": ws_id if ws_id and not str(ws_id).startswith("dry") else None,
+                "project_id": project_id,
+                "created": {
+                    "agents": {n: i for n, i in agent_ids.items()},
+                    "squad_name": manifest.team["squad_name"],
+                    "skill_names": [s["name"] for s in manifest.team.get("skills", [])
+                                    if s["source"] == "local"],
+                    "autopilot_names": [a["name"] for a in manifest.autopilots],
+                },
+            })
+            save_state(state_path_for(manifest, args.state), state)
+            print(f"\nstate saved: {state_path_for(manifest, args.state)}")
+        else:
+            print(f"\nspec stored in project '{manifest.project['name']}' "
+                  f"(workspace {manifest.workspace.get('slug')}) — manage it with:")
+            print(f"  bin/multica-setup --workspace {manifest.workspace.get('slug')} "
+                  f"--project {manifest.project['name']} <check|plan|apply|status|smoke|teardown>")
         print("next: create an issue and assign it to the squad "
               f"({manifest.team['squad_name']}) — or run `smoke` to verify the flow end-to-end.")
     else:
@@ -1264,19 +1388,26 @@ def run_apply(mc, args, manifest, dry):
 
 def cmd_plan(args):
     mc = make_mc(args)
-    manifest = load_manifest(Path(args.manifest))
-    return run_apply(mc, args, manifest, dry=True)
+    man, spec, mode = get_spec(args)
+    return run_apply(mc, args, man, None if mode == "file" else spec, dry=True)
 
 
 def cmd_apply(args):
     mc = make_mc(args)
-    manifest = load_manifest(Path(args.manifest))
-    return run_apply(mc, args, manifest, dry=False)
+    man, spec, mode = get_spec(args)
+    return run_apply(mc, args, man, None if mode == "file" else spec, dry=False)
 
 
 def cmd_status(args):
     mc = make_mc(args)
-    manifest = load_manifest(Path(args.manifest)) if args.manifest else None
+    manifest = None
+    if args.manifest:
+        manifest = load_manifest(Path(args.manifest))
+    elif args.workspace:
+        try:
+            manifest, _, _ = get_spec(args)
+        except ManifestError:
+            pass  # no managed project here — show raw workspace state
     ws_id = target_workspace_id(mc, args, manifest) if (args.workspace or manifest) else None
     if ws_id:
         mc.workspace_id = ws_id
@@ -1321,7 +1452,7 @@ def cmd_status(args):
                     trig = f" cron {t.get('cron_expression')} {t.get('timezone')}"
         except MulticaError:
             pass
-        print(f"autopilot: {a.get('name')} (assignee: {a.get('assignee_id')}, "
+        print(f"autopilot: {a.get('name') or a.get('title')} (assignee: {a.get('assignee_id')}, "
               f"mode: {a.get('execution_mode') or a.get('mode')}, status: {a.get('status') or a.get('pause_reason') or 'active'}{trig})")
 
     projs = mc.project_list()
@@ -1349,7 +1480,7 @@ def cmd_status(args):
 
 def cmd_smoke(args):
     mc = make_mc(args)
-    manifest = load_manifest(Path(args.manifest))
+    manifest, spec, mode = get_spec(args)
     ws_id = target_workspace_id(mc, args, manifest)
     if not ws_id:
         print("FAIL: target workspace not found")
@@ -1450,35 +1581,50 @@ def cmd_teardown(args):
         print("teardown archives agents, squads, autopilots, skills and the project it created.")
         print("pass --yes to proceed.")
         return 1
-    manifest = load_manifest(Path(args.manifest))
-    state = load_state(state_path_for(manifest, args.state))
-    ws_id = state.get("workspace_id")
-    mc = make_mc(args, workspace_id=ws_id)
+    manifest, spec, mode = get_spec(args)
+    state = load_state(state_path_for(manifest, args.state)) if mode == "file" else {}
     created = state.get("created", {})
-    print(f"== multica-setup: teardown (workspace: {state.get('workspace_slug')}) ==")
+    probe = make_mc(args)
+    ws_id = state.get("workspace_id") or target_workspace_id(probe, args, manifest)
+    if not ws_id:
+        print("FAIL: target workspace not found")
+        return 1
+    mc = make_mc(args, workspace_id=ws_id)
+    ws_slug = state.get("workspace_slug") or manifest.workspace.get("slug")
+    print(f"== multica-setup: teardown (workspace: {ws_slug}, spec: {mode}) ==")
 
-    for name in created.get("autopilot_names", []):
+    for name in (created.get("autopilot_names") or [a["name"] for a in manifest.autopilots]):
         for a in mc.autopilot_list():
             if a.get("name") == name or a.get("title") == name:
                 mc.autopilot_delete(a["id"])
                 print(f"archived autopilot: {name}")
-    squad_name = created.get("squad_name")
+    squad_name = created.get("squad_name") or manifest.team["squad_name"]
     for s in mc.squad_list():
         if s.get("name") == squad_name:
             mc.squad_delete(s["id"])
             print(f"archived squad: {squad_name} (its open issues transfer to the former leader)")
-    for aname, aid in (created.get("agents") or {}).items():
+    agents = created.get("agents")
+    if not agents:
+        by_name = {a.get("name"): a["id"] for a in mc.agent_list()}
+        agents = {r["name"]: by_name[r["name"]] for r in manifest.roles if r["name"] in by_name}
+    for aname, aid in (agents or {}).items():
         try:
             mc.agent_archive(aid)
             print(f"archived agent: {aname}")
         except MulticaError as e:
             print(f"agent {aname}: {e}")
-    for sname in created.get("skill_names", []):
+    for sname in (created.get("skill_names") or
+                  [s["name"] for s in manifest.team.get("skills", []) if s["source"] == "local"]):
         for s in mc.skill_list():
             if s.get("name") == sname:
                 mc.skill_delete(s["id"])
                 print(f"deleted skill: {sname}")
     pid = state.get("project_id")
+    if not pid:
+        for x in mc.project_list():
+            if x.get("title") == manifest.project["name"]:
+                pid = x["id"]
+                break
     if pid:
         try:
             mc.project_delete(pid)
@@ -1487,9 +1633,9 @@ def cmd_teardown(args):
             print(f"project: {e}")
     if ws_id and not str(ws_id).startswith("dry"):
         print(f"note: workspace deletion is not possible via CLI — remove "
-              f"'{state.get('workspace_slug')}' from the multica.ai web UI if it was newly created.")
+              f"'{ws_slug}' from the multica.ai web UI if it was newly created.")
     state_path = state_path_for(manifest, args.state)
-    if state_path.exists():
+    if mode == "file" and state_path.exists():
         state_path.unlink()
     print("teardown complete")
     return 0
@@ -1924,15 +2070,20 @@ def cmd_init(args):
                  "roles": roles_out, "skills": skills},
         "autopilots": aps,
     }
-    out_path = Path(args.out) if args.out else Path((ws.get("slug") or "project") + ".json")
-    if out_path.exists() and not args.force:
-        print(f"init: {out_path} exists — use --force to overwrite (or --out FILE)")
-        return 1
-    out_path.write_text(json.dumps(manifest_dict, indent=2, ensure_ascii=False) + "\n")
-    print(f"\nmanifest written: {out_path}")
+    out_path = None
+    if args.in_project:
+        # spec will be stored in the project's description by apply — no file
+        man = parse_manifest(manifest_dict, Path("."))
+    else:
+        out_path = Path(args.out) if args.out else Path((ws.get("slug") or "project") + ".json")
+        if out_path.exists() and not args.force:
+            print(f"init: {out_path} exists — use --force to overwrite (or --out FILE)")
+            return 1
+        out_path.write_text(json.dumps(manifest_dict, indent=2, ensure_ascii=False) + "\n")
+        print(f"\nmanifest written: {out_path}")
+        man = load_manifest(out_path)
 
     # validate exactly the way check/plan will
-    man = load_manifest(out_path)
     ctx = build_context(man)
     for r in man.roles:
         render_agent_instructions(man, r, ctx)
@@ -1942,15 +2093,21 @@ def cmd_init(args):
     print("manifest validated: templates render, roles and autopilots are sound")
 
     # ---- chain: check, plan, (apply, smoke) ----------------------------------------
-    chain = argparse.Namespace(manifest=str(out_path),
+    chain = argparse.Namespace(manifest=None if args.in_project else str(out_path),
                                workspace=ws.get("slug") if ws.get("mode") == "existing" else None,
                                profile=args.profile, state=args.state,
                                timeout=600, poll=10)
+    if args.in_project:
+        chain._spec = (man, manifest_dict)
+        chain.project = p_name
     print("\n== check ==")
     rc = cmd_check(chain)
     if rc != 0:
-        print("\ncheck failed — fix the issues above (or re-run `check`), then apply:")
-        print(f"  bin/multica-setup --manifest {out_path} apply")
+        if args.in_project:
+            print("\ncheck failed — fix the issues above, then re-run init.")
+        else:
+            print("\ncheck failed — fix the issues above (or re-run `check`), then apply:")
+            print(f"  bin/multica-setup --manifest {out_path} apply")
         return rc
     print("\n== plan ==")
     rc = cmd_plan(chain)
@@ -1970,9 +2127,13 @@ def cmd_init(args):
             print()
             return cmd_smoke(chain)
     else:
-        print("\nskipping apply — run it when ready:")
-        print(f"  bin/multica-setup --manifest {out_path} apply")
-        print(f"  bin/multica-setup --manifest {out_path} smoke")
+        if args.in_project:
+            print("\nwarning: --in-project stores the spec in the project's description, but")
+            print("apply did not run — nothing was persisted to Multica. Re-run init to try again.")
+        else:
+            print("\nskipping apply — run it when ready:")
+            print(f"  bin/multica-setup --manifest {out_path} apply")
+            print(f"  bin/multica-setup --manifest {out_path} smoke")
     return 0
 
 
@@ -1997,19 +2158,27 @@ def menu_init_wizard():
     return cmd_init(args)
 
 
-def run_project_submenu(path, profile=None):
-    """check/plan/apply/status/smoke/teardown loop for one manifest."""
+def run_project_actions(source, profile=None):
+    """check/plan/apply/status/smoke/teardown loop for one project spec.
+
+    source is {"manifest": path} (file mode) or
+    {"workspace": slug, "project": title} (spec read back via the CLI)."""
     handlers = {"check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
                 "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
+    is_file = "manifest" in source
     while True:
-        try:
-            man = load_manifest(path)
-        except ManifestError as e:
-            print(f"  manifest no longer loadable: {e}")
-            return
-        ws = man.workspace.get("slug") or man.workspace.get("name") or "?"
-        proj = man.project.get("name", "?")
-        print(f"\n== {path.name} — workspace {ws}, project {proj} ==")
+        if is_file:
+            try:
+                man = load_manifest(Path(source["manifest"]))
+            except ManifestError as e:
+                print(f"  spec no longer loadable: {e}")
+                return
+            ws = man.workspace.get("slug") or man.workspace.get("name") or "?"
+            header = f"{Path(source['manifest']).name} — workspace {ws}, project {man.project.get('name', '?')}"
+        else:
+            header = (f"workspace {source['workspace']} / project {source.get('project')} "
+                      f"(spec in project description)")
+        print(f"\n== {header} ==")
         print("  1) check   2) plan   3) apply   4) status   5) smoke   6) teardown   b) back")
         try:
             v = input("action [1-6/b]: ").strip().lower()
@@ -2030,7 +2199,9 @@ def run_project_submenu(path, profile=None):
                 print("  (teardown cancelled)")
                 continue
             yes = True
-        args = argparse.Namespace(manifest=str(path), workspace=None, profile=profile,
+        args = argparse.Namespace(manifest=str(source["manifest"]) if is_file else None,
+                                  workspace=None if is_file else source["workspace"],
+                                  project=source.get("project"), profile=profile,
                                   state=None, timeout=600, poll=10, yes=yes)
         try:
             handlers[name](args)
@@ -2040,7 +2211,7 @@ def run_project_submenu(path, profile=None):
 
 def interactive_menu(preset_manifest=None, profile=None):
     if preset_manifest:
-        run_project_submenu(Path(preset_manifest).expanduser(), profile)
+        run_project_actions({"manifest": Path(preset_manifest).expanduser()}, profile)
     while True:
         print("\n" + "-" * 52)
         print("multica-setup — bootstrap & manage Multica project teams")
@@ -2126,16 +2297,34 @@ def interactive_menu(preset_manifest=None, profile=None):
                 print("  no matching workspace")
                 continue
             if sel.get("manifest"):
-                run_project_submenu(Path(sel["manifest"]).expanduser(), profile)
+                run_project_actions({"manifest": Path(sel["manifest"]).expanduser()}, profile)
             else:
                 slug = sel["slug"]
+                managed = []
                 try:
-                    cmd_status(argparse.Namespace(manifest=None, workspace=slug,
-                                                  profile=profile))
+                    managed = list_managed_projects(slug, profile)
                 except (ManifestError, MulticaError) as e:
-                    print(f"error: {e}")
-                print(f"\nno local manifest for '{slug}' — to manage it with this kit:")
-                print(f"  bin/multica-setup init --workspace {slug}")
+                    print(f"  {str(e).splitlines()[0]}")
+                if managed:
+                    print(f"  projects managed by multica-setup in {slug}:")
+                    for i, t in enumerate(managed, 1):
+                        print(f"     [{i}] {t}")
+                    try:
+                        pv = input("project (number): ").strip()
+                    except EOFError:
+                        continue
+                    if not (pv.isdigit() and 1 <= int(pv) <= len(managed)):
+                        print("  (number only)")
+                        continue
+                    run_project_actions({"workspace": slug, "project": managed[int(pv) - 1]}, profile)
+                else:
+                    try:
+                        cmd_status(argparse.Namespace(manifest=None, workspace=slug,
+                                                      profile=profile))
+                    except (ManifestError, MulticaError) as e:
+                        print(f"error: {e}")
+                    print(f"\nno local manifest for '{slug}' — to manage it with this kit:")
+                    print(f"  bin/multica-setup init --workspace {slug}")
         else:
             print("  (1, 2, or q)")
 
@@ -2146,6 +2335,7 @@ def main(argv=None):
                                               "With no subcommand, runs the interactive menu.")
     ap.add_argument("--manifest", help="path to project manifest JSON")
     ap.add_argument("--workspace", help="override target workspace (slug or ID)")
+    ap.add_argument("--project", help="project title (with --workspace: selects the managed project whose spec lives in its description)")
     ap.add_argument("--profile", help="multica CLI profile to use")
     ap.add_argument("--state", help="state file path (default: <manifest dir>/.multica-bootstrap-state.json)")
     sub = ap.add_subparsers(dest="cmd")
@@ -2163,6 +2353,9 @@ def main(argv=None):
     ini.add_argument("--model", help="model for all roles (default: runtime default)")
     ini.add_argument("--squad", help="squad name (default: '<project> Team')")
     ini.add_argument("--no-autopilots", action="store_true", help="skip the default autopilots")
+    ini.add_argument("--in-project", action="store_true",
+                     help="store the spec in the project's description (no local manifest file; "
+                          "later commands use --workspace/--project)")
     ini.add_argument("--auto", action="store_true", help="non-interactive: answer everything from flags/defaults")
     ini.add_argument("--no-apply", action="store_true", help="stop after check+plan, do not run apply")
     ini.add_argument("--smoke", action="store_true", help="run the smoke test after apply (with --auto)")
@@ -2183,8 +2376,8 @@ def main(argv=None):
     if args.cmd is None:
         # no subcommand: run the interactive menu (--manifest jumps straight in)
         return interactive_menu(preset_manifest=args.manifest, profile=args.profile)
-    if args.cmd not in ("status", "check", "init") and not args.manifest:
-        ap.error(f"--manifest is required for '{args.cmd}'")
+    if args.cmd not in ("status", "check", "init") and not args.manifest and not args.workspace:
+        ap.error(f"--manifest <file> or --workspace <slug> is required for '{args.cmd}'")
     if args.cmd == "check" and not args.manifest and not args.workspace:
         ap.error("check needs --manifest or --workspace")
 
