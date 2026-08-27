@@ -1,0 +1,120 @@
+{
+  "workspace": {
+    "mode": "new",
+    "name": "Sample Project",
+    "slug": "sample-project",
+    "issue_prefix": "SP",
+    "description": "Sample project workspace."
+  },
+  "project": {
+    "name": "Sample Project MVP",
+    "description": "Build and run the Sample Project MVP. Boundaries: work happens in the registered repositories; anything that touches production, costs money, or changes the product direction needs the owner's explicit approval on the issue.",
+    "repos": [
+      "https://github.com/pefman/sample-project.git"
+    ],
+    "lead_role": "lead"
+  },
+  "team": {
+    "squad_name": "Sample Squad",
+    "routing": "hybrid",
+    "roles": [
+      {
+        "role": "lead",
+        "name": "Nova",
+        "runtime": "grok",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
+        "role": "engineer",
+        "name": "Pilot",
+        "runtime": "opencode",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
+        "role": "reviewer",
+        "name": "Sentinel",
+        "runtime": "pi",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
+        "role": "qa",
+        "name": "Probe",
+        "runtime": "opencode",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
+        "role": "release",
+        "name": "Courier",
+        "runtime": "opencode",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
+        "role": "helper",
+        "name": "Scout",
+        "runtime": "grok",
+        "model": null,
+        "max_concurrent_tasks": 1,
+        "in_squad": false
+      }
+    ],
+    "skills": [
+      {
+        "name": "multica-cli",
+        "source": "url",
+        "url": "https://github.com/multica-ai/multica-cli/tree/main/skills/multica-cli",
+        "attach_to": "all"
+      },
+      {
+        "name": "handoff-protocol",
+        "source": "local",
+        "attach_to": "all"
+      },
+      {
+        "name": "kanban-contract",
+        "source": "local",
+        "attach_to": "all"
+      },
+      {
+        "name": "pr-conventions",
+        "source": "local",
+        "attach_to": [
+          "lead",
+          "engineer",
+          "reviewer",
+          "qa",
+          "release"
+        ]
+      },
+      {
+        "name": "delivery-report",
+        "source": "local",
+        "attach_to": "all"
+      }
+    ]
+  },
+  "autopilots": [
+    {
+      "key": "daily-standup",
+      "name": "Daily standup",
+      "assignee_role": "lead",
+      "mode": "create_issue",
+      "cron": "30 8 * * 1-5",
+      "timezone": "Europe/Stockholm",
+      "issue_title": "Standup — {{date}}"
+    },
+    {
+      "key": "weekly-hygiene",
+      "name": "Weekly board hygiene",
+      "assignee_role": "lead",
+      "mode": "create_issue",
+      "cron": "0 9 * * 1",
+      "timezone": "Europe/Stockholm",
+      "issue_title": "Board hygiene — {{date}}"
+    }
+  ]
+}

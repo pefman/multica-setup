@@ -1,0 +1,1511 @@
+#!/usr/bin/env python3
+"""multica-setup — bootstrap a working Multica project team.
+
+Reads a project manifest (see templates/project.schema.md) and creates or
+updates the whole setup through the `multica` CLI: workspace, repositories,
+skills, agents, squad, project, and autopilots.
+
+Subcommands:
+  check     Pre-flight: CLI, auth, daemon, runtimes, templates (read-only)
+  plan      What apply would create/update (read-only)
+  apply     Create/update everything the manifest describes (idempotent)
+  status    Show the live state of the target workspace
+  smoke     Run a throwaway issue through the squad to prove the flow works
+  teardown  Archive everything this tool created (needs --yes)
+
+Everything talks to Multica through the `multica` CLI; nothing here touches
+your CLI profile or daemon.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_DIR = REPO_ROOT / "skills"
+AUTOPILOTS_DIR = REPO_ROOT / "autopilots"
+
+ROLES = {
+    "lead": "Lead",
+    "engineer": "Engineer",
+    "reviewer": "Reviewer",
+    "qa": "QA",
+    "release": "Release",
+    "helper": "Helper",
+}
+
+ROLE_BLURBS = {
+    "lead": "Coordinates the team: triage, routing, tracking, delivery to the owner. Never implements.",
+    "engineer": "Builds features and fixes in the registered repositories. Delivers as PRs.",
+    "reviewer": "Fresh-eyes code review against the issue's requirements. Comments only, never edits.",
+    "qa": "Verifies delivered work at runtime: tests, acceptance criteria, regressions.",
+    "release": "Prepares and executes approved releases and deploys. Never merges, never ships unapproved work.",
+    "helper": "Workspace office: issue triage support, board hygiene, answers. Never touches code.",
+}
+
+NO_WS_CMDS = {"auth", "daemon", "login", "setup", "config", "update", "version", "user"}
+
+ROUTING_POLICY = {
+    "hybrid": (
+        "Routing policy: hybrid. Assign work to the squad; when the owner of a "
+        "piece of work is unambiguous (e.g. a single-agent fix or review), a "
+        "direct assignment to that member is fine and faster."
+    ),
+    "leader-only": (
+        "Routing policy: leader-only. Every issue goes through this squad; "
+        "never assign directly to a member. You are the single entry point."
+    ),
+}
+
+
+class MulticaError(Exception):
+    pass
+
+
+class ManifestError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Multica CLI client — every Multica call goes through the `multica` binary
+# ---------------------------------------------------------------------------
+
+class Multica:
+    def __init__(self, workspace_id=None, profile=None):
+        self.workspace_id = workspace_id
+        self.profile = profile
+
+    def run(self, args, stdin=None, want_json=False, timeout=180):
+        cmd = ["multica", *args]
+        if self.profile:
+            cmd += ["--profile", self.profile]
+        if self.workspace_id and args[0] not in NO_WS_CMDS:
+            cmd += ["--workspace-id", self.workspace_id]
+        try:
+            p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
+        except FileNotFoundError:
+            raise MulticaError("multica CLI not found on PATH — install it first (see docs/runbook.md)")
+        except subprocess.TimeoutExpired:
+            raise MulticaError(f"timed out after {timeout}s: multica {' '.join(args)}")
+        if p.returncode != 0:
+            err = (p.stderr or p.stdout or "").strip()
+            raise MulticaError(f"`multica {' '.join(args)}` failed:\n{err[:2000]}")
+        if want_json:
+            out = p.stdout.strip()
+            if not out:
+                return None
+            try:
+                return json.loads(out)
+            except json.JSONDecodeError:
+                return out
+        return p.stdout
+
+    def j(self, args, stdin=None, timeout=180):
+        return self.run(args + ["--output", "json"], stdin=stdin, want_json=True, timeout=timeout)
+
+    # -- workspaces ---------------------------------------------------------
+    def workspace_list(self):
+        return self.j(["workspace", "list"]) or []
+
+    def workspace_create(self, name, slug, issue_prefix=None, description=None):
+        args = ["workspace", "create", "--name", name, "--slug", slug]
+        if issue_prefix:
+            args += ["--issue-prefix", issue_prefix]
+        stdin = None
+        if description:
+            args += ["--description-stdin"]
+            stdin = description
+        return self.j(args, stdin=stdin)
+
+    # -- runtimes / auth / daemon -------------------------------------------
+    def runtime_list(self):
+        return self.j(["runtime", "list"]) or []
+
+    def auth_status(self):
+        return self.run(["auth", "status"])
+
+    def daemon_status(self):
+        return self.j(["daemon", "status"])
+
+    # -- skills --------------------------------------------------------------
+    def skill_list(self):
+        return self.j(["skill", "list"]) or []
+
+    def skill_create(self, name, description, content_file):
+        args = ["skill", "create", "--name", name, "--content-file", str(content_file)]
+        if description:
+            args += ["--description", description]
+        return self.j(args)
+
+    def skill_update(self, sid, name=None, description=None, content_file=None):
+        args = ["skill", "update", sid]
+        if name:
+            args += ["--name", name]
+        if description:
+            args += ["--description", description]
+        if content_file:
+            args += ["--content-file", str(content_file)]
+        return self.j(args)
+
+    def skill_files_list(self, sid):
+        return unwrap_list(self.j(["skill", "files", "list", sid]))
+
+    def skill_file_upsert(self, sid, path, content_file):
+        return self.j(["skill", "files", "upsert", sid, "--path", path, "--content-file", str(content_file)])
+
+    def skill_file_delete(self, sid, path):
+        return self.j(["skill", "files", "delete", sid, "--path", path])
+
+    def skill_delete(self, sid):
+        return self.run(["skill", "delete", sid, "--yes"])
+
+    def skill_import_url(self, url):
+        return self.j(["skill", "import", "--url", url, "--on-conflict", "skip"])
+
+    # -- agents ---------------------------------------------------------------
+    def agent_list(self):
+        return self.j(["agent", "list"]) or []
+
+    def agent_create(self, name, runtime_id, instructions, description=None, model=None,
+                     thinking_level=None, max_concurrent_tasks=None):
+        args = ["agent", "create", "--name", name, "--runtime-id", runtime_id,
+                "--instructions", instructions,
+                "--permission-mode", "public_to", "--public-to-workspace"]
+        if description:
+            args += ["--description", description]
+        if model:
+            args += ["--model", model]
+        if thinking_level:
+            args += ["--thinking-level", thinking_level]
+        if max_concurrent_tasks:
+            args += ["--max-concurrent-tasks", str(max_concurrent_tasks)]
+        return self.j(args)
+
+    def agent_update(self, aid, instructions=None, model=None, clear_model=False,
+                     thinking_level=None, clear_thinking=False,
+                     max_concurrent_tasks=None, runtime_id=None):
+        args = ["agent", "update", aid,
+                "--permission-mode", "public_to", "--public-to-workspace"]
+        if instructions is not None:
+            args += ["--instructions", instructions]
+        if model is not None:
+            args += ["--model", model]
+        elif clear_model:
+            args += ["--model", ""]
+        if thinking_level is not None:
+            args += ["--thinking-level", thinking_level]
+        elif clear_thinking:
+            args += ["--thinking-level", ""]
+        if max_concurrent_tasks is not None:
+            args += ["--max-concurrent-tasks", str(max_concurrent_tasks)]
+        if runtime_id is not None:
+            args += ["--runtime-id", runtime_id]
+        return self.j(args)
+
+    def agent_archive(self, aid):
+        return self.j(["agent", "archive", aid])
+
+    def agent_skills_set(self, aid, skill_ids):
+        if not skill_ids:
+            return None
+        return self.j(["agent", "skills", "set", aid, "--skill-ids", ",".join(skill_ids)])
+
+    def agent_skills_list(self, aid):
+        return unwrap_list(self.j(["agent", "skills", "list", aid]))
+
+    # -- squads ----------------------------------------------------------------
+    def squad_list(self):
+        return self.j(["squad", "list"]) or []
+
+    def squad_create(self, name, leader, description=None):
+        args = ["squad", "create", "--name", name, "--leader", leader]
+        if description:
+            args += ["--description", description]
+        return self.j(args)
+
+    def squad_update(self, sid, instructions=None, leader=None, description=None):
+        args = ["squad", "update", sid]
+        if instructions is not None:
+            args += ["--instructions", instructions]
+        if leader is not None:
+            args += ["--leader", leader]
+        if description is not None:
+            args += ["--description", description]
+        return self.j(args)
+
+    def squad_delete(self, sid):
+        return self.j(["squad", "delete", sid])
+
+    def squad_member_list(self, sid):
+        return self.j(["squad", "member", "list", sid]) or []
+
+    def squad_member_add(self, sid, member_id, role_line):
+        return self.j(["squad", "member", "add", sid, "--member-id", member_id,
+                       "--type", "agent", "--role", role_line])
+
+    # -- autopilots --------------------------------------------------------------
+    def autopilot_list(self):
+        return unwrap_list(self.j(["autopilot", "list"]))
+
+    def autopilot_get(self, aid):
+        return self.j(["autopilot", "get", aid])
+
+    def autopilot_create(self, title, agent, mode, description, issue_title=None,
+                         project_id=None):
+        args = ["autopilot", "create", "--title", title, "--agent", agent,
+                "--mode", mode, "--description", description]
+        if issue_title:
+            args += ["--issue-title-template", issue_title]
+        if project_id:
+            args += ["--project", project_id]
+        return self.j(args)
+
+    def autopilot_update(self, aid, description=None, title=None, agent=None,
+                         issue_title=None, project_id=None):
+        args = ["autopilot", "update", aid]
+        if description is not None:
+            args += ["--description", description]
+        if title is not None:
+            args += ["--title", title]
+        if agent is not None:
+            args += ["--agent", agent]
+        if issue_title is not None:
+            args += ["--issue-title-template", issue_title]
+        if project_id is not None:
+            args += ["--project", project_id]
+        return self.j(args)
+
+    def autopilot_delete(self, aid):
+        return self.run(["autopilot", "delete", aid])
+
+    def autopilot_trigger_add(self, aid, cron, timezone, label=None):
+        args = ["autopilot", "trigger-add", aid, "--kind", "schedule",
+                "--cron", cron, "--timezone", timezone]
+        if label:
+            args += ["--label", label]
+        return self.j(args)
+
+    def autopilot_trigger_update(self, aid, trigger_id, cron=None, timezone=None):
+        args = ["autopilot", "trigger-update", aid, trigger_id]
+        if cron:
+            args += ["--cron", cron]
+        if timezone:
+            args += ["--timezone", timezone]
+        return self.j(args)
+
+    # -- projects / repos ----------------------------------------------------------
+    def project_list(self):
+        return self.j(["project", "list"]) or []
+
+    def project_create(self, title, description, lead=None, repos=()):
+        args = ["project", "create", "--title", title]
+        if description:
+            args += ["--description", description]
+        if lead:
+            args += ["--lead", lead]
+        for r in repos:
+            args += ["--repo", r]
+        return self.j(args)
+
+    def project_update(self, pid, description=None, lead=None, title=None):
+        args = ["project", "update", pid]
+        if description is not None:
+            args += ["--description", description]
+        if lead is not None:
+            args += ["--lead", lead]
+        if title is not None:
+            args += ["--title", title]
+        return self.j(args)
+
+    def project_delete(self, pid):
+        return self.j(["project", "delete", pid])
+
+    def project_resource_list(self, pid):
+        return unwrap_list(self.j(["project", "resource", "list", pid]))
+
+    def project_resource_add(self, pid, url, label=None):
+        args = ["project", "resource", "add", pid, "--type", "github_repo", "--url", url]
+        if label:
+            args += ["--label", label]
+        return self.j(args)
+
+    def repo_list(self):
+        return unwrap_list(self.j(["repo", "list"]))
+
+    def repo_add(self, urls):
+        return self.j(["repo", "add", *urls])
+
+    # -- issues ---------------------------------------------------------------------
+    def issue_create(self, title, description=None, status=None, assignee=None,
+                     project_id=None):
+        args = ["issue", "create", "--title", title]
+        if status:
+            args += ["--status", status]
+        if assignee:
+            args += ["--assignee", assignee]
+        if project_id:
+            args += ["--project", project_id]
+        stdin = None
+        if description is not None:
+            args += ["--description-stdin"]
+            stdin = description
+        return self.j(args, stdin=stdin)
+
+    def issue_status(self, issue, status, no_start=True):
+        args = ["issue", "status", issue, status]
+        if no_start:
+            args += ["--no-start"]
+        return self.j(args)
+
+    def issue_comment_list(self, issue):
+        return unwrap_list(self.j(["issue", "comment", "list", issue]))
+
+    def issue_runs(self, issue):
+        return unwrap_list(self.j(["issue", "runs", issue]))
+
+    def issue_cancel_task(self, task_id, issue=None):
+        args = ["issue", "cancel-task", task_id]
+        if issue:
+            args += ["--issue", issue]
+        return self.j(args)
+
+
+def unwrap_list(x):
+    if x is None:
+        return []
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        for v in x.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Manifest
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Manifest:
+    workspace: dict
+    project: dict
+    team: dict
+    autopilots: list
+    path: Path
+
+    @property
+    def roles(self):
+        return self.team["roles"]
+
+    def roles_by_role(self):
+        return {r["role"]: r for r in self.roles}
+
+    def agent_names_by_role(self):
+        return {r["role"]: r["name"] for r in self.roles}
+
+    def squad_roles(self):
+        return [r for r in self.roles if r.get("in_squad", True)]
+
+
+def load_manifest(path: Path) -> Manifest:
+    if not path.exists():
+        raise ManifestError(f"manifest not found: {path}")
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ManifestError(f"manifest is not valid JSON: {e}")
+
+    ws = raw.get("workspace")
+    if not ws or ws.get("mode") not in ("existing", "new"):
+        raise ManifestError("workspace.mode must be 'existing' or 'new'")
+    if ws["mode"] == "existing" and not ws.get("slug"):
+        raise ManifestError("workspace.slug is required when mode is 'existing'")
+    if ws["mode"] == "new" and not (ws.get("name") and ws.get("slug")):
+        raise ManifestError("workspace.name and workspace.slug are required when mode is 'new'")
+
+    project = raw.get("project") or {}
+    if not project.get("name"):
+        raise ManifestError("project.name is required")
+    if not project.get("description"):
+        raise ManifestError("project.description is required (it enters every run's context)")
+
+    team = raw.get("team") or {}
+    if not team.get("squad_name"):
+        raise ManifestError("team.squad_name is required")
+    if team.get("routing", "hybrid") not in ("hybrid", "leader-only"):
+        raise ManifestError("team.routing must be 'hybrid' or 'leader-only'")
+    roles = team.get("roles") or []
+    if not roles:
+        raise ManifestError("team.roles is required (at least the lead)")
+    seen = set()
+    for r in roles:
+        if r.get("role") not in ROLES:
+            raise ManifestError(f"unknown role '{r.get('role')}' (valid: {', '.join(ROLES)})")
+        for k in ("role", "name", "runtime"):
+            if not r.get(k):
+                raise ManifestError(f"team.roles entry missing '{k}': {r}")
+        if r["role"] in seen:
+            raise ManifestError(f"duplicate role '{r['role']}' in team.roles")
+        seen.add(r["role"])
+    if "lead" not in seen:
+        raise ManifestError("team.roles must include a 'lead' role (squad leader)")
+    for s in team.get("skills", []):
+        if not s.get("name") or s.get("source") not in ("local", "url"):
+            raise ManifestError(f"team.skills entry invalid: {s}")
+        if s["source"] == "local" and not (SKILLS_DIR / s["name"] / "SKILL.md").exists():
+            raise ManifestError(f"local skill folder missing: skills/{s['name']}/SKILL.md")
+        if s["source"] == "url" and not s.get("url"):
+            raise ManifestError(f"skill '{s['name']}' has source 'url' but no url")
+
+    autopilots = []
+    for a in raw.get("autopilots", []):
+        for k in ("key", "name", "assignee_role"):
+            if not a.get(k):
+                raise ManifestError(f"autopilot entry missing '{k}': {a}")
+        if a["assignee_role"] not in seen:
+            raise ManifestError(f"autopilot '{a['name']}' assigns unknown role '{a['assignee_role']}'")
+        if a.get("mode") not in (None, "create_issue", "run_only"):
+            raise ManifestError(f"autopilot '{a['name']}' mode must be create_issue or run_only")
+        runbook = AUTOPILOTS_DIR / f"{a['key']}.md"
+        if not runbook.exists():
+            raise ManifestError(f"autopilot runbook missing: autopilots/{a['key']}.md")
+        mode = a.get("mode", "create_issue")
+        if mode == "create_issue" and not a.get("issue_title"):
+            raise ManifestError(f"autopilot '{a['name']}' (create_issue) needs issue_title")
+        autopilots.append({
+            "key": a["key"], "name": a["name"], "assignee_role": a["assignee_role"],
+            "mode": mode, "cron": a.get("cron", "0 9 * * *"),
+            "timezone": a.get("timezone", "UTC"), "issue_title": a.get("issue_title"),
+        })
+
+    return Manifest(workspace=ws, project=project, team=team,
+                    autopilots=autopilots, path=path)
+
+
+# ---------------------------------------------------------------------------
+# Template rendering
+# ---------------------------------------------------------------------------
+
+def split_frontmatter(text):
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm, body = text[4:end], text[end + 4:].lstrip("\n")
+            name = re.search(r"^name:\s*(.+)$", fm, re.M)
+            desc = re.search(r"^description:\s*(.+)$", fm, re.M)
+            return (name.group(1).strip() if name else None,
+                    desc.group(1).strip() if desc else None, body)
+    return None, None, text
+
+
+def render(template, ctx):
+    def sub(m):
+        key = m.group(1).strip()
+        if key not in ctx:
+            raise ManifestError(f"template placeholder '{{{{ {key} }}}}' has no value in context")
+        return str(ctx[key])
+    out = re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", sub, template)
+    leftover = re.findall(r"\{\{([^{}]+)\}\}", out)
+    if leftover:
+        raise ManifestError(f"unrendered template placeholders: {leftover}")
+    return out
+
+
+ROUTE_TABLE = [
+    ("engineer", "Feature, fix, refactor in a repo"),
+    ("reviewer", "Code review of a PR/branch"),
+    ("qa", "Verify delivered behavior, run checks, regression pass"),
+    ("release", "Prepare/execute an approved release or deploy"),
+    ("helper", "Issue triage, board hygiene, questions, workspace chores"),
+]
+
+ROUTE_BULLETS = [
+    ("engineer", "Code that builds or fixes"),
+    ("reviewer", "A PR or branch that needs a quality pass"),
+    ("qa", "Delivered work that needs behavioral verification"),
+    ("release", "A release or deploy the owner has approved"),
+    ("helper", "Triage, board hygiene, questions, workspace chores"),
+]
+
+
+def build_context(manifest, agent_ids=None):
+    """Base render context shared by all templates."""
+    p = manifest.project
+    repos = "\n".join(f"- {r}" for r in p.get("repos", [])) or "(no repositories registered)"
+    names = {r["role"]: r["name"] for r in manifest.roles}
+    table_rows = [f"| {what} | {names[role]} |" for role, what in ROUTE_TABLE if role in names]
+    table_rows.append("| Anything ambiguous or cross-cutting | you route it |")
+    bullet_rows = [f"- {what} → **{names[role]}** ({role})"
+                   for role, what in ROUTE_BULLETS if role in names]
+    bullet_rows.append(
+        "- Cross-cutting, ambiguous, or multi-role work → you sequence it: "
+        "delegate the first step, then route each member's output to the next.")
+    ctx = {
+        "project_name": p["name"],
+        "project_description": p["description"],
+        "repo_list": repos,
+        "squad_name": manifest.team["squad_name"],
+        "issue_prefix": manifest.workspace.get("issue_prefix", "MP").upper(),
+        "roster": "\n".join(
+            f"- **{r['name']}** ({ROLES[r['role']]}) — {r.get('squad_role') or ROLE_BLURBS[r['role']]}"
+            for r in manifest.squad_roles()
+        ),
+        "routing_table": "| Work | First owner |\n|---|---|\n" + "\n".join(table_rows),
+        "routing_bullets": "\n".join(bullet_rows),
+    }
+    for role, nm in names.items():
+        ctx[f"{role}_name"] = nm
+    return ctx
+
+
+def render_agent_instructions(manifest, role_spec, base_ctx):
+    tpl = (REPO_ROOT / "roles" / f"{role_spec['role']}.md").read_text()
+    ctx = dict(base_ctx)
+    ctx["name"] = role_spec["name"]
+    if manifest.team.get("routing", "hybrid") == "leader-only" and role_spec["role"] == "lead":
+        tpl += "\n\n" + ROUTING_POLICY["leader-only"]
+    return render(tpl, ctx)
+
+
+def render_squad_instructions(manifest, base_ctx):
+    tpl = (REPO_ROOT / "squad" / "squad-instructions.md").read_text()
+    tpl += "\n\n" + ROUTING_POLICY[manifest.team.get("routing", "hybrid")]
+    return render(tpl, base_ctx)
+
+
+def render_runbook(manifest, key, base_ctx):
+    return render((AUTOPILOTS_DIR / f"{key}.md").read_text(), base_ctx)
+
+
+def resolve_runtime(spec_runtime, runtimes):
+    """Pick a runtime for a role: by ID, exact name, or provider."""
+    if not runtimes:
+        raise MulticaError("no runtimes registered in the target workspace — is the daemon online there?")
+    for r in runtimes:
+        if r.get("id") == spec_runtime:
+            return r
+    for r in runtimes:
+        if (r.get("name") == spec_runtime or r.get("custom_name") == spec_runtime
+                or r.get("provider") == spec_runtime):
+            online = [x for x in runtimes if x["id"] == r["id"] and x.get("status") == "online"]
+            if online:
+                return online[0]
+    matches = [r for r in runtimes if r.get("provider") == spec_runtime
+               or r.get("name") == spec_runtime or r.get("custom_name") == spec_runtime]
+    if matches:
+        return matches[0]
+    providers = sorted({r.get("provider", "?") for r in runtimes})
+    raise MulticaError(
+        f"no runtime matching '{spec_runtime}' in the workspace "
+        f"(available providers: {', '.join(providers)}; "
+        f"run `multica runtime list` for details)"
+    )
+
+
+def write_tmp(content):
+    import tempfile
+    f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    f.write(content)
+    f.close()
+    return Path(f.name)
+
+# ---------------------------------------------------------------------------
+# State file (tracks what this tool created, for teardown/re-runs)
+# ---------------------------------------------------------------------------
+
+def state_path_for(manifest, override=None):
+    if override:
+        return Path(override)
+    return manifest.path.parent / ".multica-bootstrap-state.json"
+
+
+def load_state(path):
+    if path.exists():
+        return json.loads(path.read_text())
+    return {"created": {}}
+
+
+def save_state(path, state):
+    path.write_text(json.dumps(state, indent=2) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Workspace resolution
+# ---------------------------------------------------------------------------
+
+def resolve_workspace(mc, manifest, dry, actions):
+    ws = manifest.workspace
+    if ws["mode"] == "existing":
+        for w in mc.workspace_list():
+            if w.get("slug") == ws["slug"] or w.get("id") == ws["slug"]:
+                return w["id"]
+        raise ManifestError(
+            f"workspace '{ws['slug']}' not found — check `multica workspace list`")
+    # mode: new
+    for w in mc.workspace_list():
+        if w.get("slug") == ws["slug"]:
+            return w["id"]
+    actions.append(("workspace", f"create {ws['slug']} ({ws['name']})"))
+    if not dry:
+        created = mc.workspace_create(ws["name"], ws["slug"],
+                                      ws.get("issue_prefix"), ws.get("description"))
+        wid = None
+        if isinstance(created, dict):
+            wid = created.get("id") or (created.get("workspace") or {}).get("id")
+        if not wid:
+            for w in mc.workspace_list():
+                if w.get("slug") == ws["slug"]:
+                    wid = w["id"]
+                    break
+        if not wid:
+            raise MulticaError(f"workspace created but ID not found: {created!r}")
+        print(f"note: new workspace '{ws['slug']}' created — if its runtimes do not "
+              f"appear, the daemon may need a re-login/restart to register them")
+        return wid
+    # dry: unknown id, use slug as placeholder
+    return f"dry-run:{ws['slug']}"
+
+
+# ---------------------------------------------------------------------------
+# Apply steps (each is dry-run aware)
+# ---------------------------------------------------------------------------
+
+class Plan:
+    def __init__(self, dry):
+        self.dry = dry
+
+    def log(self, kind, what, detail=None):
+        verb = "would" if self.dry else "will" if kind == "create" else ("updated" if not self.dry else "would update")
+        line = f"[{kind:6}] {what}"
+        if detail:
+            line += f" — {detail}"
+        print(line)
+
+    def ok(self, what, detail=None):
+        line = f"[ok    ] {what}"
+        if detail:
+            line += f" — {detail}"
+        print(line)
+
+    def action(self, kind, what, fn, detail=None):
+        if self.dry:
+            self.log(kind, what, detail)
+            return
+        print(f"[{kind:6}] {what}" + (f" — {detail}" if detail else ""))
+        fn()
+
+
+def step_workspace_registry(mc, manifest, plan):
+    repos = manifest.project.get("repos", [])
+    if not repos:
+        return
+    have = {r.get("url") for r in mc.repo_list()}
+    missing = [u for u in repos if u not in have]
+    if missing:
+        plan.action("create", "workspace repos",
+                    lambda: mc.repo_add(missing), f"{len(missing)} missing of {len(repos)}")
+    else:
+        plan.ok("workspace repos", f"{len(repos)} registered")
+
+
+def step_skills(mc, manifest, plan):
+    existing = {s.get("name"): s for s in mc.skill_list()}
+    ids = {}
+    for sk in manifest.team.get("skills", []):
+        name = sk["name"]
+        if sk["source"] == "local":
+            folder = SKILLS_DIR / name
+            skill_md = (folder / "SKILL.md").read_text()
+            _, description, body = split_frontmatter(skill_md)
+            support = [p for p in sorted(folder.rglob("*"))
+                       if p.is_file() and p.name != "SKILL.md"]
+            if name in existing:
+                sid = existing[name]["id"]
+                ids[name] = sid
+                if plan.dry:
+                    plan.log("update", f"skill {name}", "re-sync content + files")
+                else:
+                    plan.log("update", f"skill {name}", "re-sync content + files")
+                    tmp = write_tmp(body)
+                    try:
+                        mc.skill_update(sid, name=name, description=description, content_file=tmp)
+                        have = {f.get("path") for f in mc.skill_files_list(sid)}
+                        for f in support:
+                            rel = f.relative_to(folder).as_posix()
+                            mc.skill_file_upsert(sid, rel, f)
+                            have.discard(rel)
+                        for stale in have:
+                            if stale != "SKILL.md":
+                                mc.skill_file_delete(sid, stale)
+                    finally:
+                        tmp.unlink(missing_ok=True)
+            else:
+                if plan.dry:
+                    plan.log("create", f"skill {name}", f"local, {len(support)} supporting file(s)")
+                    ids[name] = f"dry:{name}"
+                else:
+                    plan.log("create", f"skill {name}", f"local, {len(support)} supporting file(s)")
+                    created = mc.skill_create(name, description, write_tmp_keep(body))
+                    sid = extract_id(created)
+                    ids[name] = sid
+                    for f in support:
+                        rel = f.relative_to(folder).as_posix()
+                        mc.skill_file_upsert(sid, rel, f)
+        else:
+            if name in existing:
+                ids[name] = existing[name]["id"]
+                plan.ok(f"skill {name}", "already imported (url source)")
+            elif plan.dry:
+                plan.log("create", f"skill {name}", f"import from {sk['url']}")
+                ids[name] = f"dry:{name}"
+            else:
+                plan.log("create", f"skill {name}", f"import from {sk['url']}")
+                mc.skill_import_url(sk["url"])
+                for s in mc.skill_list():
+                    if s.get("name") == name:
+                        ids[name] = s["id"]
+                        break
+    return ids
+
+
+def write_tmp_keep(content):
+    import tempfile
+    f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    f.write(content)
+    f.close()
+    return Path(f.name)
+
+
+def extract_id(obj):
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, dict):
+        if "id" in obj:
+            return obj["id"]
+        for key in ("skill", "agent", "squad", "autopilot", "project", "workspace"):
+            if isinstance(obj.get(key), dict) and "id" in obj[key]:
+                return obj[key]["id"]
+            if isinstance(obj.get(key), str):
+                return obj[key]
+    return None
+
+
+def step_agents(mc, manifest, skill_ids, plan):
+    runtimes = mc.runtime_list()
+    existing = {a.get("name"): a for a in mc.agent_list()}
+    ctx = build_context(manifest)
+    ids = {}
+    for role in manifest.roles:
+        rspec = role
+        rt = resolve_runtime(rspec["runtime"], runtimes)
+        online = rt.get("status") == "online"
+        instructions = render_agent_instructions(manifest, rspec, ctx)
+        seen, wanted = set(), []
+        for s in manifest.team.get("skills", []):
+            n = s["name"]
+            if n in skill_ids and n not in seen and (
+                    s.get("attach_to") == "all" or rspec["role"] in s.get("attach_to", [])):
+                seen.add(n)
+                wanted.append(n)
+        skill_id_list = [skill_ids[n] for n in wanted]
+        rt_note = f"runtime {rt.get('name') or rt['id']}" + ("" if online else " (OFFLINE)")
+
+        if rspec["name"] in existing:
+            a = existing[rspec["name"]]
+            changes = []
+            if (a.get("instructions") or "") != instructions:
+                changes.append("instructions")
+            if (a.get("model") or "") != (rspec.get("model") or ""):
+                changes.append("model")
+            if a.get("runtime_id") != rt["id"]:
+                changes.append("runtime")
+            cur_mct = a.get("max_concurrent_tasks")
+            if cur_mct is not None and cur_mct != rspec.get("max_concurrent_tasks", 1):
+                changes.append("concurrency")
+            if not plan.dry:
+                cur_skills = {s.get("id") for s in mc.agent_skills_list(a["id"])}
+                if cur_skills != set(skill_id_list):
+                    changes.append("skills")
+            if changes:
+                if plan.dry:
+                    plan.log("update", f"agent {rspec['name']}", f"{', '.join(changes)}; {rt_note}")
+                else:
+                    plan.log("update", f"agent {rspec['name']}", f"{', '.join(changes)}; {rt_note}")
+                    upd = {}
+                    if "instructions" in changes:
+                        upd["instructions"] = instructions
+                    if "model" in changes:
+                        if rspec.get("model"):
+                            upd["model"] = rspec["model"]
+                        else:
+                            upd["clear_model"] = True
+                    if "runtime" in changes:
+                        upd["runtime_id"] = rt["id"]
+                    if "concurrency" in changes:
+                        upd["max_concurrent_tasks"] = rspec.get("max_concurrent_tasks", 1)
+                    mc.agent_update(a["id"], **upd)
+                    if "skills" in changes:
+                        mc.agent_skills_set(a["id"], skill_id_list)
+            else:
+                plan.ok(f"agent {rspec['name']}", rt_note)
+            ids[rspec["name"]] = a["id"]
+        else:
+            detail = f"{ROLES[rspec['role']]}; {rt_note}"
+            model = rspec.get("model")
+            detail += f"; model {model}" if model else ""
+            if plan.dry:
+                plan.log("create", f"agent {rspec['name']}", detail)
+                ids[rspec["name"]] = f"dry:{rspec['name']}"
+            else:
+                plan.log("create", f"agent {rspec['name']}", detail)
+                created = mc.agent_create(
+                    rspec["name"], rt["id"], instructions,
+                    description=f"{ROLES[rspec['role']]} on {manifest.team['squad_name']}",
+                    model=rspec.get("model"),
+                    thinking_level=rspec.get("thinking_level"),
+                    max_concurrent_tasks=rspec.get("max_concurrent_tasks", 1))
+                aid = extract_id(created) or a_id_from_list(mc, rspec["name"])
+                ids[rspec["name"]] = aid
+                if skill_id_list:
+                    mc.agent_skills_set(aid, skill_id_list)
+    return ids
+
+
+def a_id_from_list(mc, name):
+    for a in mc.agent_list():
+        if a.get("name") == name:
+            return a["id"]
+    raise MulticaError(f"agent created but not found in list: {name}")
+
+
+def step_squad(mc, manifest, agent_ids, plan):
+    name = manifest.team["squad_name"]
+    lead_role = manifest.roles_by_role()["lead"]
+    lead_name = lead_role["name"]
+    leader_id = agent_ids[lead_name]
+    ctx = build_context(manifest)
+    instructions = render_squad_instructions(manifest, ctx)
+    members = [(agent_ids[r["name"]], r.get("squad_role") or ROLE_BLURBS[r["role"]], r["name"])
+               for r in manifest.squad_roles() if r["role"] != "lead"]
+
+    existing = {s.get("name"): s for s in mc.squad_list()}
+    if name in existing:
+        s = existing[name]
+        sid = s["id"]
+        if plan.dry:
+            plan.log("update", f"squad {name}", f"leader {lead_name}, {len(members)} members, instructions")
+        else:
+            plan.log("update", f"squad {name}", "sync leader/members/instructions")
+            cur_leader = s.get("leader_id")
+            if cur_leader and cur_leader != leader_id:
+                mc.squad_update(sid, leader=lead_name)
+            cur_members = {m.get("member_id"): m for m in mc.squad_member_list(sid)}
+            for mid, role_line, rname in members:
+                if mid not in cur_members:
+                    mc.squad_member_add(sid, mid, role_line)
+            mc.squad_update(sid, instructions=instructions)
+        return sid
+    if plan.dry:
+        plan.log("create", f"squad {name}",
+                f"leader {lead_name} + {', '.join(m[2] for m in members)}")
+        sid = f"dry:{name}"
+    else:
+        plan.log("create", f"squad {name}",
+                f"leader {lead_name} + {', '.join(m[2] for m in members)}")
+        created = mc.squad_create(
+            name, lead_name,
+            description=f"Squad for {manifest.project['name']} — {manifest.team.get('routing', 'hybrid')} routing.")
+        sid = extract_id(created)
+        for mid, role_line, _ in members:
+            mc.squad_member_add(sid, mid, role_line)
+        mc.squad_update(sid, instructions=instructions)
+    return sid
+
+
+def step_project(mc, manifest, agent_ids, plan):
+    p = manifest.project
+    title = p["name"]
+    repos = p.get("repos", [])
+    lead_name = agent_names_for_role(manifest, p.get("lead_role", "lead"))
+    lead_id = agent_ids.get(lead_name) if lead_name else None
+    existing = {x.get("title"): x for x in mc.project_list()}
+    if title in existing:
+        proj = existing[title]
+        pid = proj["id"]
+        changes = []
+        if (proj.get("description") or "") != p["description"]:
+            changes.append("description")
+        if lead_id and proj.get("lead_id") and proj["lead_id"] != lead_id:
+            changes.append("lead")
+        if changes:
+            if plan.dry:
+                plan.log("update", f"project {title}", ", ".join(changes))
+            else:
+                plan.log("update", f"project {title}", ", ".join(changes))
+                upd = {}
+                if "description" in changes:
+                    upd["description"] = p["description"]
+                if "lead" in changes and lead_name:
+                    upd["lead"] = lead_name
+                mc.project_update(pid, **upd)
+        else:
+            plan.ok(f"project {title}")
+        _sync_project_repos(mc, pid, repos, plan)
+        return pid
+    detail = f"{len(repos)} repo(s)" + (f", lead {lead_name}" if lead_name else "")
+    if plan.dry:
+        plan.log("create", f"project {title}", detail)
+    else:
+        plan.log("create", f"project {title}", detail)
+        created = mc.project_create(title, p["description"], lead=lead_name, repos=repos)
+        pid = extract_id(created)
+        if not pid:
+            for x in mc.project_list():
+                if x.get("title") == title:
+                    pid = x["id"]
+                    break
+        return pid
+
+
+def agent_names_for_role(manifest, role):
+    m = manifest.agent_names_by_role()
+    return m.get(role, "")
+
+
+def _sync_project_repos(mc, pid, repos, plan):
+    if not repos:
+        return
+    try:
+        cur = {r.get("url") for r in mc.project_resource_list(pid)}
+    except MulticaError:
+        return
+    missing = [u for u in repos if u not in cur]
+    if missing:
+        if plan.dry:
+            plan.log("create", "project resources", f"{len(missing)} missing repo(s)")
+        else:
+            plan.log("create", "project resources", f"{len(missing)} missing repo(s)")
+            for u in missing:
+                mc.project_resource_add(pid, u)
+
+
+def step_autopilots(mc, manifest, agent_ids, project_id, plan):
+    ctx = build_context(manifest)
+    existing = {a.get("name"): a for a in mc.autopilot_list()}
+    names = manifest.agent_names_by_role()
+    for ap in manifest.autopilots:
+        assignee = names.get(ap["assignee_role"], "")
+        runbook = render_runbook(manifest, ap["key"], ctx)
+        if ap["name"] in existing:
+            a = existing[ap["name"]]
+            aid = a["id"]
+            if plan.dry:
+                plan.log("update", f"autopilot {ap['name']}",
+                         f"assignee {assignee}, cron {ap['cron']} {ap['timezone']}")
+            else:
+                plan.log("update", f"autopilot {ap['name']}", "sync runbook/trigger")
+                det = mc.autopilot_get(aid)
+                if (det.get("description") or "") != runbook:
+                    mc.autopilot_update(aid, description=runbook)
+                if ap["mode"] == "create_issue" and ap.get("issue_title"):
+                    if (det.get("issue_title_template") or "") != ap["issue_title"]:
+                        mc.autopilot_update(aid, issue_title=ap["issue_title"])
+                if project_id and (det.get("project_id") in (None, "") or det.get("project_id") != project_id):
+                    mc.autopilot_update(aid, project_id=project_id)
+                triggers = det.get("triggers") or []
+                sched = next((t for t in triggers if t.get("kind") == "schedule"), None)
+                if sched is None:
+                    mc.autopilot_trigger_add(aid, ap["cron"], ap["timezone"], label=ap["name"])
+                elif (sched.get("cron_expression") != ap["cron"]
+                      or sched.get("timezone") != ap["timezone"]):
+                    mc.autopilot_trigger_update(aid, sched["id"], cron=ap["cron"],
+                                                timezone=ap["timezone"])
+            continue
+        detail = (f"assignee {assignee}, {ap['mode']}, cron {ap['cron']} {ap['timezone']}")
+        if plan.dry:
+            plan.log("create", f"autopilot {ap['name']}", detail)
+        else:
+            plan.log("create", f"autopilot {ap['name']}", detail)
+            created = mc.autopilot_create(
+                ap["name"], assignee, ap["mode"], runbook,
+                issue_title=ap.get("issue_title") if ap["mode"] == "create_issue" else None,
+                project_id=project_id)
+            aid = extract_id(created)
+            mc.autopilot_trigger_add(aid, ap["cron"], ap["timezone"], label=ap["name"])
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def make_mc(args, workspace_id=None):
+    return Multica(workspace_id=workspace_id, profile=args.profile)
+
+
+def target_workspace_id(mc, args, manifest=None):
+    """Workspace to operate on: --workspace > manifest > profile default."""
+    if args.workspace:
+        for w in mc.workspace_list():
+            if w.get("slug") == args.workspace or w.get("id") == args.workspace:
+                return w["id"]
+        raise ManifestError(f"workspace '{args.workspace}' not found")
+    if manifest:
+        ws = manifest.workspace
+        if ws["mode"] == "existing":
+            for w in mc.workspace_list():
+                if w.get("slug") == ws["slug"] or w.get("id") == ws["slug"]:
+                    return w["id"]
+            raise ManifestError(
+                f"workspace '{ws['slug']}' not found — is it in this account? "
+                f"(`multica workspace list`)")
+        for w in mc.workspace_list():
+            if w.get("slug") == ws["slug"]:
+                return w["id"]
+        return None
+    return None
+
+
+def cmd_check(args):
+    mc = make_mc(args)
+    print("== multica-setup: pre-flight check ==")
+    ok = True
+
+    def report(level, what, detail=""):
+        nonlocal ok
+        mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}[level]
+        line = f"  [{mark}] {what}"
+        if detail:
+            line += f" — {detail}"
+        print(line)
+        if level == "fail":
+            ok = False
+
+    # CLI
+    exe = shutil.which("multica")
+    if not exe:
+        report("fail", "multica CLI", "not found on PATH")
+        return 1
+    ver = subprocess.run([exe, "version"], capture_output=True, text=True).stdout.strip().splitlines()
+    report("ok", "multica CLI", ver[0] if ver else exe)
+    if ver and "0.4.26" not in ver[0]:
+        major = re.search(r"multica (\d+)\.(\d+)\.(\d+)", ver[0])
+        if major and (int(major.group(1)), int(major.group(2))) < (0, 5) and \
+           (int(major.group(2)) < 4 or (int(major.group(2)) == 4 and int(major.group(3)) < 26)):
+            report("warn", "multica version", f"{ver[0]} — the multica-cli skill needs >= 0.4.26")
+
+    # auth
+    try:
+        out = mc.auth_status()
+        m = re.search(r"Server:\s*(\S+)", out or "")
+        report("ok", "auth", m.group(1) if m else "signed in")
+    except MulticaError as e:
+        report("fail", "auth", str(e).splitlines()[0])
+        return 1
+
+    # daemon
+    try:
+        d = mc.daemon_status()
+        if d and d.get("status") == "running":
+            report("ok", "daemon", f"{d.get('device_name', '?')} online, tools: {', '.join(d.get('agents', [])) or 'none detected'}")
+        else:
+            report("fail", "daemon", "not running — `multica daemon start`")
+    except MulticaError as e:
+        report("warn", "daemon", str(e).splitlines()[0])
+
+    manifest = load_manifest(Path(args.manifest)) if args.manifest else None
+    ws_id = None
+    if manifest:
+        # workspace
+        try:
+            ws_id = target_workspace_id(mc, args, manifest)
+            if ws_id:
+                report("ok", "workspace", f"{manifest.workspace.get('slug') or ws_id}")
+            else:
+                report("warn", "workspace",
+                       f"new workspace '{manifest.workspace['slug']}' does not exist yet (apply will create it)")
+        except ManifestError as e:
+            report("fail", "workspace", str(e))
+            return 1
+
+        # runtimes per role
+        if ws_id and not ws_id.startswith("dry"):
+            mc2 = Multica(workspace_id=ws_id, profile=args.profile)
+            runtimes = mc2.runtime_list()
+            online = {r["id"] for r in runtimes if r.get("status") == "online"}
+            if not runtimes:
+                report("fail", "runtimes", "none registered in this workspace — daemon may need a restart/re-login to pick it up")
+            for r in manifest.roles:
+                try:
+                    rt = resolve_runtime(r["runtime"], runtimes)
+                    if rt["id"] in online:
+                        report("ok", f"role {r['role']} ({r['name']})", f"runtime {rt.get('name')} online")
+                    else:
+                        report("warn", f"role {r['role']} ({r['name']})",
+                               f"runtime {rt.get('name')} is OFFLINE — tasks will queue until it is back")
+                except MulticaError as e:
+                    report("fail", f"role {r['role']} ({r['name']})", str(e))
+
+        # templates
+        try:
+            ctx = build_context(manifest)
+            for r in manifest.roles:
+                render_agent_instructions(manifest, r, ctx)
+            render_squad_instructions(manifest, ctx)
+            for ap in manifest.autopilots:
+                render_runbook(manifest, ap["key"], ctx)
+            report("ok", "templates", "all role/squad/runbook templates render")
+        except (ManifestError, OSError) as e:
+            report("fail", "templates", str(e))
+
+        # gh (only relevant with repos)
+        if manifest.project.get("repos"):
+            if shutil.which("gh"):
+                report("ok", "GitHub CLI", "available for PR-based verification")
+            else:
+                report("warn", "GitHub CLI", "not found — PR checks in reviews/deploys will be limited")
+
+    print("== " + ("PASS" if ok else "PASS (with warnings)" if ok else "FAIL"))
+    return 0 if ok else 1
+
+
+def run_apply(mc, args, manifest, dry):
+    plan = Plan(dry)
+    print(f"== multica-setup: {'plan' if dry else 'apply'} for "
+          f"{'workspace ' + (manifest.workspace.get('slug') or '?')} — {manifest.project['name']} ==")
+    ws_id = None
+    if manifest.workspace["mode"] == "existing" or not dry:
+        try:
+            ws_id = target_workspace_id(mc, args, manifest)
+        except ManifestError as e:
+            print(f"FAIL: {e}")
+            return 1
+        if ws_id:
+            mc.workspace_id = ws_id
+    if manifest.workspace["mode"] == "new":
+        ws_id = resolve_workspace(mc, manifest, dry, [])
+        if ws_id and not str(ws_id).startswith("dry-run"):
+            mc.workspace_id = ws_id
+        if str(ws_id or "").startswith("dry-run") and dry:
+            # Nothing exists yet: print what would be created, no live queries.
+            n_skills = len(manifest.team.get("skills", []))
+            print(f"workspace: create {manifest.workspace['slug']} ({manifest.workspace.get('name')})")
+            print(f"project:   create {manifest.project['name']} "
+                  f"({len(manifest.project.get('repos', []))} repo(s))")
+            for r in manifest.roles:
+                print(f"agent:     create {r['name']} ({ROLES[r['role']]} on {r['runtime']})")
+            print(f"skills:    create/import {', '.join(s['name'] for s in manifest.team.get('skills', []))}")
+            print(f"squad:     create {manifest.team['squad_name']} "
+                  f"(leader {manifest.roles_by_role()['lead']['name']}, "
+                  f"{sum(1 for r in manifest.squad_roles() if r['role'] != 'lead')} members)")
+            for a in manifest.autopilots:
+                print(f"autopilot: create {a['name']} (cron {a['cron']} {a['timezone']})")
+            print("\nplan complete — nothing was changed. Run `apply` to execute.")
+            print("note: after `apply` creates the workspace, the daemon may need a "
+                  "re-login/restart before its runtimes appear there.")
+            return 0
+
+    step_workspace_registry(mc, manifest, plan)
+    skill_ids = step_skills(mc, manifest, plan)
+    agent_ids = step_agents(mc, manifest, skill_ids, plan)
+    step_squad(mc, manifest, agent_ids, plan)
+    project_id = step_project(mc, manifest, agent_ids, plan)
+    step_autopilots(mc, manifest, agent_ids, project_id, plan)
+
+    if not dry:
+        state = load_state(state_path_for(manifest, args.state))
+        state.update({
+            "workspace_slug": manifest.workspace.get("slug"),
+            "workspace_id": ws_id if ws_id and not str(ws_id).startswith("dry") else None,
+            "project_id": project_id,
+            "created": {
+                "agents": {n: i for n, i in agent_ids.items()},
+                "squad_name": manifest.team["squad_name"],
+                "skill_names": [s["name"] for s in manifest.team.get("skills", [])
+                                if s["source"] == "local"],
+                "autopilot_names": [a["name"] for a in manifest.autopilots],
+            },
+        })
+        save_state(state_path_for(manifest, args.state), state)
+        print(f"\nstate saved: {state_path_for(manifest, args.state)}")
+        print("next: create an issue and assign it to the squad "
+              f"({manifest.team['squad_name']}) — or run `smoke` to verify the flow end-to-end.")
+    else:
+        print("\nplan complete — nothing was changed. Run `apply` to execute.")
+    return 0
+
+
+def cmd_plan(args):
+    mc = make_mc(args)
+    manifest = load_manifest(Path(args.manifest))
+    return run_apply(mc, args, manifest, dry=True)
+
+
+def cmd_apply(args):
+    mc = make_mc(args)
+    manifest = load_manifest(Path(args.manifest))
+    return run_apply(mc, args, manifest, dry=False)
+
+
+def cmd_status(args):
+    mc = make_mc(args)
+    manifest = load_manifest(Path(args.manifest)) if args.manifest else None
+    ws_id = target_workspace_id(mc, args, manifest) if (args.workspace or manifest) else None
+    if ws_id:
+        mc.workspace_id = ws_id
+    slug = manifest.workspace.get("slug") if manifest else args.workspace or "(profile default)"
+    print(f"== multica-setup: status — workspace {slug} ==")
+    try:
+        d = mc.daemon_status()
+        if d and d.get("status") == "running":
+            print(f"daemon: {d.get('device_name')} online — tools: {', '.join(d.get('agents', [])) or 'n/a'}")
+        else:
+            print("daemon: not running")
+    except MulticaError as e:
+        print(f"daemon: {e}")
+
+    for r in mc.runtime_list():
+        print(f"runtime: {r.get('name') or r.get('id'):<28} {r.get('provider'):<10} {r.get('status')}")
+
+    agents = mc.agent_list()
+    if agents:
+        print(f"agents ({len(agents)}):")
+        for a in agents:
+            model = a.get("model") or "default"
+            print(f"  {a.get('name'):<22} {model:<28} {a.get('status', '?')}")
+    else:
+        print("agents: none")
+
+    squads = mc.squad_list()
+    for s in squads:
+        leader = s.get("leader_name") or s.get("leader_id") or "?"
+        print(f"squad: {s.get('name')} (leader: {leader})")
+
+    aps = mc.autopilot_list()
+    for a in aps:
+        trig = ""
+        try:
+            det = mc.autopilot_get(a["id"])
+            for t in (det.get("triggers") or []):
+                if t.get("kind") == "schedule":
+                    trig = f" cron {t.get('cron_expression')} {t.get('timezone')}"
+        except MulticaError:
+            pass
+        print(f"autopilot: {a.get('name')} (assignee: {a.get('assignee_id')}, "
+              f"mode: {a.get('execution_mode') or a.get('mode')}, status: {a.get('status') or a.get('pause_reason') or 'active'}{trig})")
+
+    projs = mc.project_list()
+    for p in projs:
+        print(f"project: {p.get('title')} ({p.get('status')})")
+    repos = mc.repo_list()
+    for r in repos:
+        print(f"repo: {r.get('url')}")
+
+    try:
+        issues = mc.j(["issue", "list", "--limit", "200"])
+        counts = {}
+        for i in issues:
+            counts[i.get("status", "?")] = counts.get(i.get("status", "?"), 0) + 1
+        if counts:
+            print("issues: " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
+    except MulticaError:
+        pass
+    return 0
+
+
+def cmd_smoke(args):
+    mc = make_mc(args)
+    manifest = load_manifest(Path(args.manifest))
+    ws_id = target_workspace_id(mc, args, manifest)
+    if not ws_id:
+        print("FAIL: target workspace not found")
+        return 1
+    mc.workspace_id = ws_id
+    squads = {s.get("name"): s for s in mc.squad_list()}
+    squad = manifest.team["squad_name"]
+    if squad not in squads:
+        print(f"FAIL: squad '{squad}' not found in workspace — run apply first")
+        return 1
+
+    issue_desc = (
+        "Smoke test for the bootstrap flow. The squad leader should read this, "
+        "record its evaluation, and post ONE delegation comment handing it to "
+        "the member whose role fits (any member is fine for this test). "
+        "No code, no PR: the delegated member should reply with one short "
+        "comment confirming it received the handoff, using the handoff-protocol "
+        "format (Done / Evidence / Questions / Ask). Then stop. "
+        "This issue will be cancelled by the bootstrap tool afterwards."
+    )
+    project_id = None
+    for p in mc.project_list():
+        if p.get("title") == manifest.project["name"]:
+            project_id = p["id"]
+            break
+    print(f"== multica-setup: smoke test via squad '{squad}' ==")
+    created = mc.issue_create(
+        f"Smoke: bootstrap flow test {time.strftime('%Y-%m-%d %H:%M')}",
+        description=issue_desc, status="todo", assignee=squad, project_id=project_id)
+    issue = None
+    if isinstance(created, dict):
+        issue = created.get("key") or created.get("identifier") or created.get("title")
+        if not issue:
+            for v in created.values():
+                if isinstance(v, str) and re.match(r"^[A-Z]+-\d+$", v):
+                    issue = v
+                    break
+    if not issue:
+        print(f"FAIL: could not determine issue key from: {created!r}")
+        return 1
+    print(f"issue: {issue} (assigned to {squad}, status todo)")
+
+    deadline = time.time() + args.timeout
+    runs_seen, comments_seen = [], []
+    evidence = []
+    while time.time() < deadline:
+        time.sleep(args.poll)
+        try:
+            runs = mc.issue_runs(issue)
+            comments = mc.issue_comment_list(issue)
+        except MulticaError as e:
+            print(f"  poll: {e}")
+            continue
+        runs_seen = [r for r in runs if isinstance(r, dict)]
+        comments_seen = [c for c in comments if isinstance(c, dict)]
+        nonleader = [c for c in comments_seen
+                     if not (c.get("author_name") or c.get("author") or "").lower().startswith(
+                         manifest.roles_by_role()["lead"]["name"].lower())]
+        if runs_seen:
+            statuses = [r.get("status") for r in runs_seen]
+            print(f"  runs: {len(runs_seen)} ({', '.join(statuses) or 'n/a'})")
+        if any(c.get("content") or "" for c in comments_seen):
+            dispatch = next((c for c in comments_seen
+                             if "@mention" in (c.get("content") or "")
+                             or "handoff" in (c.get("content") or "").lower()), None)
+            if dispatch:
+                print("  leader dispatch comment present")
+            if nonleader:
+                print(f"  member response present ({len(nonleader)} comment(s))")
+            if dispatch and (nonleader or len(runs_seen) >= 2):
+                evidence.append("full chain: leader dispatch + member response")
+                break
+            if dispatch:
+                evidence.append("leader dispatched; waiting for member response")
+    if not evidence:
+        evidence.append("timeout — no full chain observed (runs/comments logged above)")
+    print("evidence:", "; ".join(evidence) if evidence else "none")
+
+    print("cleaning up...")
+    try:
+        for r in runs_seen:
+            tid = r.get("id") or r.get("task_id")
+            st = (r.get("status") or "").lower()
+            if tid and st in ("queued", "dispatched", "running", "pending"):
+                mc.issue_cancel_task(tid, issue=issue)
+                print(f"  cancelled task {tid}")
+        mc.issue_status(issue, "cancelled")
+        print(f"issue {issue} cancelled")
+    except MulticaError as e:
+        print(f"cleanup note: {e}")
+    passed = any("full chain" in e for e in evidence)
+    print("smoke: " + ("PASS" if passed else "INCOMPLETE — inspect the issue before trusting the setup"))
+    return 0 if passed else 2
+
+
+def cmd_teardown(args):
+    if not args.yes:
+        print("teardown archives agents, squads, autopilots, skills and the project it created.")
+        print("pass --yes to proceed.")
+        return 1
+    manifest = load_manifest(Path(args.manifest))
+    state = load_state(state_path_for(manifest, args.state))
+    ws_id = state.get("workspace_id")
+    mc = make_mc(args, workspace_id=ws_id)
+    created = state.get("created", {})
+    print(f"== multica-setup: teardown (workspace: {state.get('workspace_slug')}) ==")
+
+    for name in created.get("autopilot_names", []):
+        for a in mc.autopilot_list():
+            if a.get("name") == name or a.get("title") == name:
+                mc.autopilot_delete(a["id"])
+                print(f"archived autopilot: {name}")
+    squad_name = created.get("squad_name")
+    for s in mc.squad_list():
+        if s.get("name") == squad_name:
+            mc.squad_delete(s["id"])
+            print(f"archived squad: {squad_name} (its open issues transfer to the former leader)")
+    for aname, aid in (created.get("agents") or {}).items():
+        try:
+            mc.agent_archive(aid)
+            print(f"archived agent: {aname}")
+        except MulticaError as e:
+            print(f"agent {aname}: {e}")
+    for sname in created.get("skill_names", []):
+        for s in mc.skill_list():
+            if s.get("name") == sname:
+                mc.skill_delete(s["id"])
+                print(f"deleted skill: {sname}")
+    pid = state.get("project_id")
+    if pid:
+        try:
+            mc.project_delete(pid)
+            print("deleted project")
+        except MulticaError as e:
+            print(f"project: {e}")
+    if ws_id and not str(ws_id).startswith("dry"):
+        print(f"note: workspace deletion is not possible via CLI — remove "
+              f"'{state.get('workspace_slug')}' from the multica.ai web UI if it was newly created.")
+    state_path = state_path_for(manifest, args.state)
+    if state_path.exists():
+        state_path.unlink()
+    print("teardown complete")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="multica-setup",
+                                 description="Bootstrap a working Multica project team via the multica CLI.")
+    ap.add_argument("--manifest", help="path to project manifest JSON")
+    ap.add_argument("--workspace", help="override target workspace (slug or ID)")
+    ap.add_argument("--profile", help="multica CLI profile to use")
+    ap.add_argument("--state", help="state file path (default: <manifest dir>/.multica-bootstrap-state.json)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("check", help="pre-flight checks (read-only)")
+    sub.add_parser("plan", help="show what apply would do (read-only)")
+    sub.add_parser("apply", help="create/update everything (idempotent)")
+    sub.add_parser("status", help="show live workspace state")
+    sp = sub.add_parser("smoke", help="run a throwaway issue through the squad")
+    sp.add_argument("--timeout", type=int, default=600, help="max wait seconds (default 600)")
+    sp.add_argument("--poll", type=int, default=10, help="poll interval seconds (default 10)")
+    st = sub.add_parser("teardown", help="archive what this tool created")
+    st.add_argument("--yes", action="store_true", help="actually do it")
+
+    args = ap.parse_args(argv)
+    if args.cmd != "status" and not args.manifest and args.cmd != "check":
+        ap.error(f"--manifest is required for '{args.cmd}'")
+    if args.cmd == "check" and not args.manifest and not args.workspace:
+        ap.error("check needs --manifest or --workspace")
+
+    handlers = {"check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
+                "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
+    try:
+        return handlers[args.cmd](args)
+    except (ManifestError, MulticaError) as e:
+        print(f"error: {e}")
+        return 1
+    except KeyboardInterrupt:
+        print("\ninterrupted")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
