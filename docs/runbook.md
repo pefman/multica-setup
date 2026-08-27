@@ -97,6 +97,13 @@ archived agents are **restored** and re-synced. If you ever see
 "an agent named X already exists" instead, your tool is older than 1.5 —
 or the name belongs to a non-archived agent you manage yourself.
 
+**Why did `init` (wizard) skip `apply`?**
+With piped/non-interactive stdin, every unanswered prompt falls back to its
+default — so the wizard *never* auto-applies: a partial pipe could otherwise
+land on the first workspace with "apply = yes" by default. Scripted runs use
+`init --auto ...` (explicit); interactive runs get the "Run apply now?"
+prompt.
+
 **A run fails**
 `multica issue runs <ISSUE>` → open the failed run → `run-messages` shows
 the transcript. The issue rolls back to `todo` automatically when a run

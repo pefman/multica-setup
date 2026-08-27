@@ -2117,6 +2117,13 @@ def cmd_init(args):
     do_apply = not args.no_apply
     if auto:
         apply_now = do_apply
+    elif not sys.stdin.isatty():
+        # piped stdin can't express "yes, apply" reliably — on EOF every prompt
+        # falls back to its default, so never auto-apply here
+        apply_now = False
+        if do_apply:
+            print("\nnote: non-interactive stdin — apply skipped. Re-run interactively,")
+            print("or use --auto (explicit) for scripted runs.")
     else:
         apply_now = do_apply and ask_yesno("\nRun apply now?", True)
     if apply_now:
@@ -2154,7 +2161,7 @@ def menu_init_wizard():
                               description=None, repos=None, roles=None, runtime=None,
                               model=None, squad=None, no_autopilots=False, no_apply=False,
                               smoke=False, out=None, force=True, profile=None, state=None,
-                              manifest=None, timeout=600, poll=10)
+                              manifest=None, in_project=False, timeout=600, poll=10)
     return cmd_init(args)
 
 
