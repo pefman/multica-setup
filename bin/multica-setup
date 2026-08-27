@@ -6,6 +6,7 @@ updates the whole setup through the `multica` CLI: workspace, repositories,
 skills, agents, squad, project, and autopilots.
 
 Subcommands:
+  init      Interactive (or --auto) manifest authoring, then check/plan/apply/smoke
   check     Pre-flight: CLI, auth, daemon, runtimes, templates (read-only)
   plan      What apply would create/update (read-only)
   apply     Create/update everything the manifest describes (idempotent)
@@ -1470,6 +1471,411 @@ def cmd_teardown(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# init — interactive (or flag-driven) manifest authoring
+# ---------------------------------------------------------------------------
+
+def slugify(name):
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", s)
+
+
+def derive_prefix(name):
+    parts = re.findall(r"[A-Za-z]", (name or "").strip())
+    words = re.split(r"\s+", (name or "").strip())
+    initials = "".join(w[0] for w in words if w[:1].isupper()) or "".join(parts[:3])
+    return (initials or "MP")[:3].upper()
+
+
+_stdin_eof = False
+
+
+def ask(prompt, default=None):
+    global _stdin_eof
+    if _stdin_eof:
+        return default or ""
+    suffix = f" [{default}]" if default not in (None, "") else ""
+    try:
+        line = input(f"{prompt}{suffix}: ")
+    except EOFError:
+        _stdin_eof = True
+        return default or ""
+    line = line.strip()
+    if not line:
+        return default or ""
+    return line
+
+
+def ask_required(prompt, default=None):
+    global _stdin_eof
+    while True:
+        if _stdin_eof:
+            return default or ""
+        v = ask(prompt, default)
+        if v:
+            return v
+        print("  (required — please enter a value)")
+
+
+def ask_choice(prompt, options, default_index=0):
+    global _stdin_eof
+    for i, o in enumerate(options):
+        mark = "*" if i == default_index else " "
+        print(f"  {mark} [{i + 1}] {o}")
+    lo = str(default_index + 1)
+    while True:
+        if _stdin_eof:
+            return default_index
+        try:
+            v = input(f"{prompt} (1-{len(options)}): ").strip() or lo
+        except EOFError:
+            _stdin_eof = True
+            return default_index
+        if v.isdigit() and 1 <= int(v) <= len(options):
+            return int(v) - 1
+        for i, o in enumerate(options):
+            if v.lower() == str(o).lower():
+                return i
+        print("  (invalid choice)")
+
+
+def ask_yesno(prompt, default=True):
+    global _stdin_eof
+    if _stdin_eof:
+        return False
+    d = "Y/n" if default else "y/N"
+    try:
+        v = input(f"{prompt} [{d}]: ").strip().lower()
+    except EOFError:
+        # never auto-proceed chained actions when input runs out
+        _stdin_eof = True
+        return False
+    if not v:
+        return default
+    return v in ("y", "yes")
+
+
+def ask_toggle(prompt, names, defaults):
+    shown = "  ".join(f"[{'x' if n in defaults else ' '}] {n}" for n in names)
+    v = ask(prompt + " " + shown + " — Enter to accept, or a comma list:")
+    if not v:
+        return list(defaults)
+    sel = [n.strip() for n in v.split(",") if n.strip()]
+    unknown = [n for n in sel if n not in names]
+    if unknown:
+        print(f"  ignoring unknown: {', '.join(unknown)}")
+    out = [n for n in sel if n in names]
+    if not out:
+        return list(defaults)
+    return out
+
+
+def pick_runtime(role_label, runtimes, auto, fixed=None, missing=None):
+    """Returns the runtime spec string for a role; '' if undetermined (auto mode)."""
+    if fixed:
+        return fixed
+    if runtimes:
+        opts = [f"{r.get('name') or r['id']} — {r.get('provider')} ({r.get('status')})"
+                for r in runtimes]
+        online_idx = [i for i, r in enumerate(runtimes) if r.get("status") == "online"]
+        di = online_idx[0] if online_idx else 0
+        if auto:
+            return runtimes[di]["provider"]
+        for k, o in enumerate(opts):
+            mark = "*" if k == di else " "
+            print(f"  {mark} [{k + 1}] {o}")
+        i = di
+        while True:
+            if _stdin_eof:
+                break
+            try:
+                v = input(f"  {role_label} runtime (1-{len(runtimes)} or provider name): ").strip()
+            except EOFError:
+                _stdin_eof = True
+                break
+            if not v:
+                v = str(di + 1)
+            if v.isdigit() and 1 <= int(v) <= len(runtimes):
+                i = int(v) - 1
+                break
+            matched = None
+            for k, r in enumerate(runtimes):
+                cands = {str(opts[k]).lower()}
+                if r.get("provider"):
+                    cands.add(r["provider"].lower())
+                if r.get("name"):
+                    cands.add(r["name"].lower())
+                if v.lower() in cands:
+                    matched = k
+                    break
+            if matched is None:
+                print("  (invalid choice)")
+                continue
+            i = matched
+            break
+        print(f"  (binding provider '{runtimes[i]['provider']}')")
+        return runtimes[i]["provider"]
+    # no runtimes (e.g. brand-new workspace before daemon sync)
+    if auto:
+        if missing is not None:
+            msg = "--runtime <provider> (no runtimes in the target workspace yet)"
+            if msg not in missing:
+                missing.append(msg)
+            return ""
+        raise ManifestError(
+            f"no runtimes in this workspace yet — "
+            f"re-run after the daemon registers runtimes, or pick a provider below")
+    v = ask_required("  no runtimes in this workspace yet (daemon may still be syncing) — "
+                     "enter a provider to bind (e.g. opencode, grok, pi, claude, codex)")
+    return v
+
+
+def local_tz():
+    try:
+        import time as _t
+        if _t.tzname and _t.tzname[0]:
+            return _t.tzname[0]
+    except Exception:
+        pass
+    return "UTC"
+
+
+def cmd_init(args):
+    auto = args.auto
+    mc = make_mc(args)
+    missing = []
+
+    # ---- workspace ---------------------------------------------------------
+    if args.workspace:
+        ws = {"mode": "existing", "slug": args.workspace}
+    elif args.new_workspace:
+        ws_slug = args.slug or slugify(args.new_workspace)
+        ws = {"mode": "new", "name": args.new_workspace, "slug": ws_slug,
+              "issue_prefix": args.issue_prefix or derive_prefix(args.new_workspace)}
+        if args.workspace_description:
+            ws["description"] = args.workspace_description
+    elif auto:
+        missing.append("--workspace or --new-workspace (workspace)")
+        ws = {"mode": "new", "name": "unnamed", "slug": "unnamed", "issue_prefix": "UN"}
+    else:
+        choice = ask_choice("Workspace", ["existing workspace", "new workspace"], default_index=0)
+        if choice == 0:
+            wss = mc.workspace_list()
+            if not wss:
+                print("  no workspaces found — create one (option 2)")
+                choice = 1
+        if choice == 0:
+            i = ask_choice("  pick your workspace", [f"{w['name']} ({w['slug']})" for w in wss])
+            ws = {"mode": "existing", "slug": wss[i]["slug"]}
+        else:
+            name = ask_required("  workspace name")
+            ws = {"mode": "new", "name": name,
+                  "slug": ask("  workspace slug", slugify(name)),
+                  "issue_prefix": ask("  issue prefix", derive_prefix(name))}
+            d = ask("  workspace description (optional)")
+            if d:
+                ws["description"] = d
+
+    # resolve target ws id + runtimes
+    ws_id = None
+    runtimes = []
+    try:
+        ws_id = target_workspace_id(mc, args, None) if args.workspace else None
+        if ws_id is None and not args.workspace:
+            if ws.get("mode") == "existing":
+                for w in mc.workspace_list():
+                    if w.get("slug") == ws["slug"] or w.get("id") == ws["slug"]:
+                        ws_id = w["id"]
+                        break
+            elif ws.get("mode") == "new":
+                for w in mc.workspace_list():
+                    if w.get("slug") == ws["slug"]:
+                        ws_id = w["id"]
+                        break
+    except ManifestError:
+        pass
+    if ws_id and not str(ws_id).startswith("dry"):
+        mc_scoped = Multica(workspace_id=ws_id, profile=args.profile)
+        runtimes = mc_scoped.runtime_list()
+        if not runtimes and ws.get("mode") == "new":
+            print("note: the new workspace has no runtimes yet — the daemon may need a "
+                  "re-login/restart; you can still pick a provider for now.")
+
+    # ---- project ------------------------------------------------------------
+    if args.project:
+        p_name = args.project
+    elif auto:
+        missing.append("--project (project name)")
+        p_name = ""
+    else:
+        p_name = ask_required("Project name")
+    if args.description:
+        p_desc = args.description
+    elif auto:
+        p_desc = (f"{p_name or 'The project'}. Boundaries: work happens in the registered "
+                 "repositories; anything that touches production, costs money, or changes "
+                 "direction needs the owner's explicit approval on the issue.")
+    else:
+        skeleton = (f"{p_name}. Boundaries: work happens in the registered repositories; "
+                    f"anything that touches production, costs money, or changes direction "
+                    f"needs the owner's explicit approval on the issue.")
+        p_desc = ask("Project description (goal + boundaries; enters every run's context)", skeleton)
+    repos = list(args.repos or [])
+    if not auto:
+        print("Repos (one URL per line, blank line when done):")
+        while True:
+            try:
+                line = input("  ").strip()
+            except EOFError:
+                break
+            if not line:
+                break
+            repos.append(line)
+
+    # ---- team ----------------------------------------------------------------
+    all_roles = list(ROLES)
+    if args.roles:
+        selected = [r.strip() for r in args.roles.split(",") if r.strip()]
+        bad = [r for r in selected if r not in ROLES]
+        if bad:
+            missing.append(f"valid roles for --roles (got: {', '.join(bad)})")
+            selected = []
+        if "lead" not in selected and selected:
+            selected.append("lead")
+    elif auto:
+        selected = all_roles
+    else:
+        selected = ask_toggle("Team roles", all_roles, all_roles)
+        if "lead" not in selected:
+            selected.append("lead")
+            print("  (lead is required — added it back)")
+    selected = [r for r in all_roles if r in selected]
+
+    tz = local_tz()
+    roles_out = []
+    for role in selected:
+        label = f"{ROLES[role]} ({role})"
+        if auto:
+            name = ROLES[role]
+        else:
+            name = ask(f"  {label} agent name", ROLES[role])
+        rt_spec = pick_runtime(label, runtimes, auto, fixed=args.runtime, missing=missing if auto else None)
+        if auto and not rt_spec:
+            continue
+        if auto:
+            model = args.model
+        else:
+            m = ask(f"  {label} model (blank = runtime default)", "")
+            model = m or None
+        entry = {"role": role, "name": name, "runtime": rt_spec,
+                 "max_concurrent_tasks": 1}
+        if model:
+            entry["model"] = model
+        roles_out.append(entry)
+
+    squad_name = args.squad or (f"{p_name} Team" if p_name else "Project Team")
+    if not auto:
+        squad_name = ask("Squad name", f"{p_name} Team")
+
+    skills = [
+        {"name": "multica-cli", "source": "url",
+         "url": "https://github.com/multica-ai/multica-cli/tree/main/skills/multica-cli",
+         "attach_to": "all"},
+        {"name": "handoff-protocol", "source": "local", "attach_to": "all"},
+        {"name": "kanban-contract", "source": "local", "attach_to": "all"},
+        {"name": "pr-conventions", "source": "local",
+         "attach_to": ["lead", "engineer", "reviewer", "qa", "release"]},
+        {"name": "delivery-report", "source": "local", "attach_to": "all"},
+    ]
+
+    # ---- autopilots ------------------------------------------------------------
+    aps = []
+    if not args.no_autopilots:
+        default_ap = (
+            {"key": "daily-standup", "name": "Daily standup", "assignee_role": "lead",
+             "mode": "create_issue", "cron": "30 8 * * 1-5", "timezone": tz,
+             "issue_title": "Standup — {{date}}"},
+            {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
+             "mode": "create_issue", "cron": "0 9 * * 1", "timezone": tz,
+             "issue_title": "Board hygiene — {{date}}"},
+        )
+        if auto:
+            aps = [dict(a) for a in default_ap]
+        else:
+            picked = ask_toggle("Autopilots", ["daily-standup", "weekly-hygiene"],
+                                ["daily-standup", "weekly-hygiene"])
+            for key in picked:
+                ap = dict(default_ap[0 if key == "daily-standup" else 1])
+                ap["cron"] = ask(f"  {key} cron", ap["cron"])
+                ap["timezone"] = ask(f"  {key} timezone", ap["timezone"])
+                aps.append(ap)
+
+    if missing:
+        print("init: missing required information for --auto mode:")
+        for m in missing:
+            print(f"  - {m}")
+        print("(re-run with these flags, or without --auto for the interactive flow)")
+        return 1
+
+    # ---- write manifest ----------------------------------------------------------
+    manifest_dict = {
+        "workspace": ws,
+        "project": {"name": p_name, "description": p_desc, "repos": repos,
+                    "lead_role": "lead"},
+        "team": {"squad_name": squad_name, "routing": "hybrid",
+                 "roles": roles_out, "skills": skills},
+        "autopilots": aps,
+    }
+    out_path = Path(args.out) if args.out else Path((ws.get("slug") or "project") + ".json")
+    if out_path.exists() and not args.force:
+        print(f"init: {out_path} exists — use --force to overwrite (or --out FILE)")
+        return 1
+    out_path.write_text(json.dumps(manifest_dict, indent=2, ensure_ascii=False) + "\n")
+    print(f"\nmanifest written: {out_path}")
+
+    # validate exactly the way check/plan will
+    man = load_manifest(out_path)
+    ctx = build_context(man)
+    for r in man.roles:
+        render_agent_instructions(man, r, ctx)
+    render_squad_instructions(man, ctx)
+    for ap in man.autopilots:
+        render_runbook(man, ap["key"], ctx)
+    print("manifest validated: templates render, roles and autopilots are sound")
+
+    # ---- chain: check, plan, (apply, smoke) ----------------------------------------
+    chain = argparse.Namespace(manifest=str(out_path),
+                               workspace=ws.get("slug") if ws.get("mode") == "existing" else None,
+                               profile=args.profile, state=args.state,
+                               timeout=600, poll=10)
+    print("\n== check ==")
+    rc = cmd_check(chain)
+    if rc not in (0, 1):
+        return rc
+    print("\n== plan ==")
+    rc = cmd_plan(chain)
+    if rc != 0:
+        return rc
+
+    do_apply = not args.no_apply
+    if auto:
+        apply_now = do_apply
+    else:
+        apply_now = do_apply and ask_yesno("\nRun apply now?", True)
+    if apply_now:
+        rc = cmd_apply(chain)
+        if rc != 0:
+            return rc
+        if args.smoke or (not auto and ask_yesno("Run smoke now?", True)):
+            print()
+            return cmd_smoke(chain)
+    else:
+        print("\nskipping apply — run it when ready:")
+        print(f"  bin/multica-setup --manifest {out_path} apply")
+        print(f"  bin/multica-setup --manifest {out_path} smoke")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="multica-setup",
                                  description="Bootstrap a working Multica project team via the multica CLI.")
@@ -1478,6 +1884,25 @@ def main(argv=None):
     ap.add_argument("--profile", help="multica CLI profile to use")
     ap.add_argument("--state", help="state file path (default: <manifest dir>/.multica-bootstrap-state.json)")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    ini = sub.add_parser("init", help="interactive: author a manifest, then check/plan/apply/smoke")
+    ini.add_argument("--new-workspace", help="create a new workspace with this name")
+    ini.add_argument("--slug", help="slug for the new workspace (default: derived from name)")
+    ini.add_argument("--issue-prefix", help="issue prefix for the new workspace (default: derived)")
+    ini.add_argument("--workspace-description", help="description for the new workspace")
+    ini.add_argument("--project", help="project name")
+    ini.add_argument("--description", help="project description")
+    ini.add_argument("--repos", nargs="*", help="repository URLs")
+    ini.add_argument("--roles", help="comma list of roles (lead is required), e.g. lead,engineer,reviewer")
+    ini.add_argument("--runtime", help="runtime provider bound to all roles (e.g. opencode, grok, pi)")
+    ini.add_argument("--model", help="model for all roles (default: runtime default)")
+    ini.add_argument("--squad", help="squad name (default: '<project> Team')")
+    ini.add_argument("--no-autopilots", action="store_true", help="skip the default autopilots")
+    ini.add_argument("--auto", action="store_true", help="non-interactive: answer everything from flags/defaults")
+    ini.add_argument("--no-apply", action="store_true", help="stop after check+plan, do not run apply")
+    ini.add_argument("--smoke", action="store_true", help="run the smoke test after apply (with --auto)")
+    ini.add_argument("--out", help="manifest output path (default: <workspace-slug>.json)")
+    ini.add_argument("--force", action="store_true", help="overwrite an existing manifest file")
 
     sub.add_parser("check", help="pre-flight checks (read-only)")
     sub.add_parser("plan", help="show what apply would do (read-only)")
@@ -1490,12 +1915,12 @@ def main(argv=None):
     st.add_argument("--yes", action="store_true", help="actually do it")
 
     args = ap.parse_args(argv)
-    if args.cmd != "status" and not args.manifest and args.cmd != "check":
+    if args.cmd not in ("status", "check", "init") and not args.manifest:
         ap.error(f"--manifest is required for '{args.cmd}'")
     if args.cmd == "check" and not args.manifest and not args.workspace:
         ap.error("check needs --manifest or --workspace")
 
-    handlers = {"check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
+    handlers = {"init": cmd_init, "check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
                 "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
     try:
         return handlers[args.cmd](args)

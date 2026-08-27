@@ -33,21 +33,23 @@ at once:
 ## Quickstart
 
 ```bash
-# 1. Describe your project: copy the example, fill in workspace/repo/team.
-cp templates/project.example.json my-project.json
-$EDITOR my-project.json
+# Answer a few questions: workspace, project, team, runtimes, automations.
+# Writes <workspace-slug>.json, runs check + plan (read-only), then asks
+# whether to apply and smoke.
+bin/multica-setup init
 
-# 2. Pre-flight: CLI, auth, daemon, runtimes, templates (read-only).
-bin/multica-setup --manifest my-project.json check
+# Non-interactive (scripts/CI) — same result, no prompts:
+bin/multica-setup init --auto --new-workspace "My Project" \
+  --slug my-project --project "My Project" --runtime opencode \
+  --roles lead,engineer,reviewer --smoke
+```
 
-# 3. See what would be created/changed (read-only).
-bin/multica-setup --manifest my-project.json plan
+If you stopped before `apply` (or ran with `--no-apply`), pick it up later
+with the manifest `init` wrote:
 
-# 4. Create (idempotent — safe to re-run after editing templates/manifest).
-bin/multica-setup --manifest my-project.json apply
-
-# 5. Prove the flow works end-to-end (throwaway issue through the squad).
-bin/multica-setup --manifest my-project.json smoke
+```bash
+bin/multica-setup --manifest my-project.json apply   # idempotent — safe to re-run
+bin/multica-setup --manifest my-project.json smoke   # prove the flow end-to-end
 ```
 
 Then start working: create issues in the workspace and assign them to the
@@ -60,11 +62,15 @@ bin/multica-setup --manifest my-project.json status   # live team/board view
 multica issue create --title "Add X" --description-stdin < x.md   # then assign
 ```
 
+Prefer to hand-maintain a manifest instead of the guided `init`? Copy
+`templates/project.example.json` to `my-project.json`, fill it in, then run
+`check` → `plan` → `apply` → `smoke` as above.
+
 ## Repository map
 
 | Path | What it is |
 |---|---|
-| `bin/multica-setup` | The bootstrap CLI (`check / plan / apply / status / smoke / teardown`) |
+| `bin/multica-setup` | The bootstrap CLI (`init / check / plan / apply / status / smoke / teardown`) |
 | `templates/` | Manifest example + field reference |
 | `roles/` | Instruction templates per role (rendered into each agent) |
 | `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |

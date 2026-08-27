@@ -43,9 +43,18 @@ that field as drift (fix it in the manifest when it becomes permanent).
 
 ## New project on the same team shape
 
-Copy a manifest, point it at a new workspace (or an existing one), adjust
-`project` + `repos`, run `check` → `plan` → `apply`. Agents/skills/squads
-are per-workspace, so a new workspace gets a fresh copy of the team.
+Just run `init` again — it writes a fresh manifest for the new workspace
+and chains `check` → `plan` → (ask) `apply` → (ask) `smoke`:
+
+```bash
+bin/multica-setup init --new-workspace "My Other Project" \
+  --slug my-other-project --project "My Other Project" --runtime opencode
+```
+
+Agents/skills/squads are per-workspace, so a new workspace gets a fresh copy
+of the team. To reuse a hand-tuned manifest instead, copy it, point it at
+the new workspace, adjust `project` + `repos`, run `check` → `plan` →
+`apply`.
 
 ## Troubleshooting
 
