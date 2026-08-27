@@ -74,6 +74,14 @@ Prefer to hand-maintain a manifest instead of the guided `init`? Copy
 `templates/project.example.json` to `my-project.json`, fill it in, then run
 `check` → `plan` → `apply` → `smoke` as above.
 
+**Manifests are your spec, not your state.** The `multica` CLI is the only
+source of truth for what exists in Multica — every command asks it live.
+The `<workspace>.json` file the wizard writes is a local *desired-state*
+specification (think terraform file): git-track it, edit it, re-apply.
+The bare-run menu lists live workspaces from the CLI and shows local
+specs only as annotations; a workspace you want managed needs a spec for
+it (written by `init`, or `init --workspace <slug>` to adopt an existing one).
+
 ## Repository map
 
 | Path | What it is |

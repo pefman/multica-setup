@@ -662,8 +662,18 @@ def resolve_workspace(mc, manifest, dry, actions):
             return w["id"]
     actions.append(("workspace", f"create {ws['slug']} ({ws['name']})"))
     if not dry:
-        created = mc.workspace_create(ws["name"], ws["slug"],
-                                      ws.get("issue_prefix"), ws.get("description"))
+        try:
+            created = mc.workspace_create(ws["name"], ws["slug"],
+                                          ws.get("issue_prefix"), ws.get("description"))
+        except MulticaError as e:
+            if "slug already exists" in str(e):
+                raise MulticaError(
+                    f"workspace slug '{ws['slug']}' is already taken — slugs are global "
+                    f"across ALL users on Multica Cloud, so short/generic slugs are often "
+                    f"owned by other accounts.\n"
+                    f"Fix: change workspace.slug in the manifest and re-run apply, or run\n"
+                    f"      bin/multica-setup init --workspace {ws['slug']} to manage the existing workspace") from e
+            raise
         wid = None
         if isinstance(created, dict):
             wid = created.get("id") or (created.get("workspace") or {}).get("id")
@@ -1138,7 +1148,9 @@ def cmd_check(args):
                 report("ok", "workspace", f"{manifest.workspace.get('slug') or ws_id}")
             else:
                 report("warn", "workspace",
-                       f"new workspace '{manifest.workspace['slug']}' does not exist yet (apply will create it)")
+                       f"new workspace '{manifest.workspace['slug']}' does not exist yet "
+                       f"(apply will create it) — slugs are unique across ALL users on "
+                       f"Multica Cloud; if apply fails with 'slug already exists', pick a longer/unique slug")
         except ManifestError as e:
             report("fail", "workspace", str(e))
             return 1
@@ -1793,6 +1805,8 @@ def cmd_init(args):
         else:
             for a in default_ap:
                 print(f"  autopilot:    {a['name']}  ({a['cron']}, {a['timezone']})")
+        if ws.get("mode") == "new" and len(ws["slug"]) < 4:
+            print("  hint:         short slugs are often already taken globally on Multica Cloud — a longer, unique slug is safer")
         uses_defaults = ask_yesno("\nProceed with defaults? (n = customize)", True)
 
     if not auto and not uses_defaults:
@@ -1934,7 +1948,9 @@ def cmd_init(args):
                                timeout=600, poll=10)
     print("\n== check ==")
     rc = cmd_check(chain)
-    if rc not in (0, 1):
+    if rc != 0:
+        print("\ncheck failed — fix the issues above (or re-run `check`), then apply:")
+        print(f"  bin/multica-setup --manifest {out_path} apply")
         return rc
     print("\n== plan ==")
     rc = cmd_plan(chain)
@@ -2029,15 +2045,50 @@ def interactive_menu(preset_manifest=None, profile=None):
         print("\n" + "-" * 52)
         print("multica-setup — bootstrap & manage Multica project teams")
         print("-" * 52)
-        found = discover_manifests()
         print("  1) Start a new project")
-        if found:
-            print("  2) Work with an existing project")
-            for i, (p, m) in enumerate(found, 1):
-                ws = m.workspace.get("slug") or m.workspace.get("name") or "?"
-                print(f"     [{i}] {p.name}  (workspace {ws})")
+        print("  2) Work with an existing project")
+
+        # Live workspaces from the multica CLI are the source of truth;
+        # local manifest files only annotate them (desired-state specs).
+        live = None
+        try:
+            live = Multica(profile=profile).workspace_list()
+        except MulticaError as e:
+            print(f"  note: cannot reach the multica CLI ({str(e).splitlines()[0]}) — "
+                  "listing local specs instead")
+        manifests = discover_manifests()
+        by_slug = {}
+        for p, m in manifests:
+            s = m.workspace.get("slug")
+            if s:
+                by_slug.setdefault(s, p)
+        options = []
+        if live:
+            for w in live:
+                slug = w.get("slug") or ""
+                options.append({"slug": slug, "manifest": by_slug.get(slug),
+                                "label": f"{w.get('name')} ({slug})"})
         else:
-            print("  2) Work with an existing project  (none found in this directory)")
+            for p, m in manifests:
+                ws = m.workspace.get("slug") or m.workspace.get("name") or "?"
+                options.append({"slug": ws, "manifest": p, "label": p.name})
+        if not options:
+            print("     (none found)")
+        for i, o in enumerate(options, 1):
+            o["n"] = i
+            if live:
+                mark = (f"manifest: {o['manifest'].name}" if o["manifest"]
+                        else "no local manifest")
+                print(f"     [{i}] {o['label']}  ({mark})")
+            else:
+                print(f"     [{i}] {o['label']}  (workspace {o['slug']})")
+        if live:
+            matched = {o["manifest"] for o in options if o["manifest"]}
+            dangling = [p for p in by_slug.values() if p not in matched]
+            if dangling:
+                print("  local specs with no workspace in this account: "
+                      + ", ".join(p.name for p in dangling)
+                      + " — use `--manifest <file>`")
         print("  q) Quit")
         try:
             v = input("\nchoice [1/2/q]: ").strip().lower()
@@ -2055,26 +2106,36 @@ def interactive_menu(preset_manifest=None, profile=None):
             except (ManifestError, MulticaError) as e:
                 print(f"error: {e}")
         elif v == "2":
-            target = None
-            if len(found) == 1:
-                target = found[0][0]
-            elif found:
-                mv = ask("manifest (number or path)", "")
+            sel = None
+            if len(options) == 1:
+                sel = options[0]
+            elif options:
+                mv = ask("workspace (number or slug)", "")
                 if not mv:
                     continue
-                if mv.isdigit() and 1 <= int(mv) <= len(found):
-                    target = found[int(mv) - 1][0]
-                else:
-                    target = Path(mv).expanduser()
-                    if not target.exists():
-                        print(f"  no such file: {target}")
-                        continue
+                mv_l = mv.lower()
+                for o in options:
+                    if str(o["n"]) == mv or o["slug"].lower() == mv_l:
+                        sel = o
+                        break
+                if sel is None and not live:
+                    t = Path(mv).expanduser()
+                    if t.exists():
+                        sel = {"slug": mv, "manifest": t, "label": t.name}
+            if sel is None:
+                print("  no matching workspace")
+                continue
+            if sel.get("manifest"):
+                run_project_submenu(Path(sel["manifest"]).expanduser(), profile)
             else:
-                target = Path(ask_required("manifest path")).expanduser()
-                if not target.exists():
-                    print(f"  no such file: {target}")
-                    continue
-            run_project_submenu(target, profile)
+                slug = sel["slug"]
+                try:
+                    cmd_status(argparse.Namespace(manifest=None, workspace=slug,
+                                                  profile=profile))
+                except (ManifestError, MulticaError) as e:
+                    print(f"error: {e}")
+                print(f"\nno local manifest for '{slug}' — to manage it with this kit:")
+                print(f"  bin/multica-setup init --workspace {slug}")
         else:
             print("  (1, 2, or q)")
 

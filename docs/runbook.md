@@ -56,6 +56,15 @@ of the team. To reuse a hand-tuned manifest instead, copy it, point it at
 the new workspace, adjust `project` + `repos`, run `check` → `plan` →
 `apply`.
 
+## The menu (bare `bin/multica-setup`)
+
+Lists **live workspaces from the multica CLI** (the source of truth).
+Local `*.json` specs in the directory are only shown as annotations
+(`manifest: <file>`); specs whose workspace is not in this account land
+under "local specs with no workspace in this account" and are driven with
+`--manifest <file>`. A workspace without a local spec can be viewed
+(read-only status) and adopted with `bin/multica-setup init --workspace <slug>`.
+
 ## Troubleshooting
 
 **Tasks never start / issue stuck after assign**
@@ -69,6 +78,14 @@ the new workspace, adjust `project` + `repos`, run `check` → `plan` →
 The daemon registers runtimes per workspace at login. Run
 `multica login` (or `multica daemon restart`) on the machine, re-check with
 `bin/multica-setup ... check`, then re-run `apply` — it is idempotent.
+
+**apply fails with "workspace slug already exists"**
+On Multica Cloud, slugs are unique across **all users** — short/generic
+ones (`testing`, `d1`, …) are often already owned by another account's
+workspace and will never appear in your `workspace list` (so no pre-flight
+can see them either). Pick a longer, unique slug in the manifest and
+re-run `apply` — or if you meant to manage an existing workspace,
+`bin/multica-setup init --workspace <slug>`.
 
 **A run fails**
 `multica issue runs <ISSUE>` → open the failed run → `run-messages` shows
