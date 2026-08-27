@@ -36,6 +36,11 @@ at once:
 # Just run it — it shows a menu and asks the questions:
 # new project (guided wizard), or pick an existing manifest
 # (check / plan / apply / status / smoke / teardown).
+#
+# The wizard asks ~3 questions (workspace, project name), then shows
+# exactly what it will create — press Enter to proceed with the defaults
+# (the team gets a random fun name like "Galloping Otter"), or n to
+# customize roles, runtimes, repos, and automations.
 bin/multica-setup
 
 # Or go straight to the wizard:

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import shutil
 import subprocess
@@ -1652,6 +1653,32 @@ def local_tz():
     return "UTC"
 
 
+TEAM_VERBS = [
+    "Bouncing", "Cackling", "Charging", "Cuddling", "Dashing", "Dreaming",
+    "Fidgeting", "Foraging", "Galloping", "Gliding", "Giggling", "Grinning",
+    "Grumbling", "Hatching", "Herding", "Howling", "Juggling", "Jolting",
+    "Leaping", "Looming", "Moseying", "Nibbling", "Pouncing", "Prowling",
+    "Rocketing", "Rumbling", "Sneaking", "Skating", "Tinkering", "Tumbling",
+]
+
+TEAM_ANIMALS = [
+    "Badger", "Bobcat", "Camel", "Capybara", "Coyote", "Crane",
+    "Dolphin", "Dragon", "Eagle", "Ferret", "Fox", "Gecko",
+    "Goose", "Heron", "Hyena", "Jaguar", "Koala", "Lemur",
+    "Lizard", "Lynx", "Mantis", "Moose", "Otter", "Owl",
+    "Panda", "Penguin", "Quokka", "Raccoon", "Sloth", "Whale",
+]
+
+
+def random_team_name(taken=None):
+    """A fun VERB + ANIMAL squad name, rerolled past any existing names."""
+    while True:
+        name = f"{random.choice(TEAM_VERBS)} {random.choice(TEAM_ANIMALS)}"
+        if taken and name in taken:
+            continue
+        return name
+
+
 def cmd_init(args):
     auto = args.auto
     mc = make_mc(args)
@@ -1682,15 +1709,13 @@ def cmd_init(args):
         else:
             name = ask_required("  workspace name")
             ws = {"mode": "new", "name": name,
-                  "slug": ask("  workspace slug", slugify(name)),
-                  "issue_prefix": ask("  issue prefix", derive_prefix(name))}
-            d = ask("  workspace description (optional)")
-            if d:
-                ws["description"] = d
+                  "slug": slugify(name),
+                  "issue_prefix": derive_prefix(name)}
 
     # resolve target ws id + runtimes
     ws_id = None
     runtimes = []
+    mc_scoped = mc
     try:
         ws_id = target_workspace_id(mc, args, None) if args.workspace else None
         if ws_id is None and not args.workspace:
@@ -1713,7 +1738,7 @@ def cmd_init(args):
             print("note: the new workspace has no runtimes yet — the daemon may need a "
                   "re-login/restart; you can still pick a provider for now.")
 
-    # ---- project ------------------------------------------------------------
+# ---- project (name only — the rest rides on the defaults question) ------
     if args.project:
         p_name = args.project
     elif auto:
@@ -1721,19 +1746,65 @@ def cmd_init(args):
         p_name = ""
     else:
         p_name = ask_required("Project name")
-    if args.description:
-        p_desc = args.description
-    elif auto:
-        p_desc = (f"{p_name or 'The project'}. Boundaries: work happens in the registered "
-                 "repositories; anything that touches production, costs money, or changes "
-                 "direction needs the owner's explicit approval on the issue.")
-    else:
-        skeleton = (f"{p_name}. Boundaries: work happens in the registered repositories; "
-                    f"anything that touches production, costs money, or changes direction "
-                    f"needs the owner's explicit approval on the issue.")
-        p_desc = ask("Project description (goal + boundaries; enters every run's context)", skeleton)
+
+    skeleton = (f"{p_name or 'The project'}. Boundaries: work happens in the registered "
+                f"repositories; anything that touches production, costs money, or changes "
+                f"direction needs the owner's explicit approval on the issue.")
+    p_desc = args.description or skeleton
     repos = list(args.repos or [])
+
+    # ---- defaults summary ------------------------------------------------------
+    all_roles = list(ROLES)
+    tz = local_tz()
+    default_ap = (
+        {"key": "daily-standup", "name": "Daily standup", "assignee_role": "lead",
+         "mode": "create_issue", "cron": "30 8 * * 1-5", "timezone": tz,
+         "issue_title": "Standup — {{date}}"},
+        {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
+         "mode": "create_issue", "cron": "0 9 * * 1", "timezone": tz,
+         "issue_title": "Board hygiene — {{date}}"},
+    )
+    pool = [r for r in runtimes if r.get("status") == "online"] or runtimes
+    default_rt = args.runtime or (pool[0]["provider"] if pool else "")
+    taken_squads = set()
+    if ws_id and not str(ws_id).startswith("dry"):
+        try:
+            taken_squads = {s.get("name") for s in mc_scoped.squad_list() if s.get("name")}
+        except MulticaError:
+            pass
+    squad_name = args.squad or random_team_name(taken_squads)
+
+    uses_defaults = auto
     if not auto:
+        if ws.get("mode") == "new":
+            ws_disp = f"{ws['name']} (new — slug {ws['slug']}, prefix {ws['issue_prefix']})"
+        else:
+            ws_disp = ws["slug"]
+        rt_disp = default_rt or "(no online runtimes yet — you'll be asked for a provider)"
+        desc_disp = p_desc if len(p_desc) <= 78 else p_desc[:75] + "..."
+        print(f"\nDefaults for workspace {ws_disp}:")
+        print(f"  project:      {p_name}")
+        print(f"  description:  {desc_disp}")
+        print(f"  repos:        {', '.join(repos) if repos else '(none)'}")
+        print(f"  team:         {squad_name} — {', '.join(ROLES)}")
+        print(f"  runtimes:     each on {rt_disp}, model: {args.model or 'runtime default'}")
+        if args.no_autopilots:
+            print("  autopilots:   (off — --no-autopilots)")
+        else:
+            for a in default_ap:
+                print(f"  autopilot:    {a['name']}  ({a['cron']}, {a['timezone']})")
+        uses_defaults = ask_yesno("\nProceed with defaults? (n = customize)", True)
+
+    if not auto and not uses_defaults:
+        # customize: override anything the summary showed
+        p_desc = args.description or ask(
+            "Project description (goal + boundaries; enters every run's context)", skeleton)
+        if ws.get("mode") == "new":
+            ws["slug"] = ask("  workspace slug", ws["slug"])
+            ws["issue_prefix"] = ask("  issue prefix", ws["issue_prefix"])
+            d = ask("  workspace description (optional)")
+            if d:
+                ws["description"] = d
         print("Repos (one URL per line, blank line when done):")
         while True:
             try:
@@ -1745,16 +1816,18 @@ def cmd_init(args):
             repos.append(line)
 
     # ---- team ----------------------------------------------------------------
-    all_roles = list(ROLES)
-    if args.roles:
-        selected = [r.strip() for r in args.roles.split(",") if r.strip()]
-        bad = [r for r in selected if r not in ROLES]
-        if bad:
-            missing.append(f"valid roles for --roles (got: {', '.join(bad)})")
-            selected = []
-        if "lead" not in selected and selected:
-            selected.append("lead")
-    elif auto:
+    if auto:
+        if args.roles:
+            selected = [r.strip() for r in args.roles.split(",") if r.strip()]
+            bad = [r for r in selected if r not in ROLES]
+            if bad:
+                missing.append(f"valid roles for --roles (got: {', '.join(bad)})")
+                selected = []
+            if "lead" not in selected and selected:
+                selected.append("lead")
+        else:
+            selected = all_roles
+    elif uses_defaults:
         selected = all_roles
     else:
         selected = ask_toggle("Team roles", all_roles, all_roles)
@@ -1763,19 +1836,27 @@ def cmd_init(args):
             print("  (lead is required — added it back)")
     selected = [r for r in all_roles if r in selected]
 
-    tz = local_tz()
+    if not auto and uses_defaults and not default_rt:
+        default_rt = ask_required("  which provider should the team bind to? "
+                                  "(e.g. opencode, grok, pi, claude, codex)")
+
     roles_out = []
     for role in selected:
         label = f"{ROLES[role]} ({role})"
-        if auto:
+        if auto or uses_defaults:
             name = ROLES[role]
         else:
             name = ask(f"  {label} agent name", ROLES[role])
-        rt_spec = pick_runtime(label, runtimes, auto, fixed=args.runtime, missing=missing if auto else None)
+        if auto:
+            rt_spec = pick_runtime(label, runtimes, True, fixed=args.runtime, missing=missing)
+        elif uses_defaults:
+            rt_spec = default_rt
+        else:
+            rt_spec = pick_runtime(label, runtimes, auto, fixed=args.runtime, missing=None)
         if auto and not rt_spec:
             continue
-        if auto:
-            model = args.model
+        if auto or uses_defaults:
+            model = args.model or None
         else:
             m = ask(f"  {label} model (blank = runtime default)", "")
             model = m or None
@@ -1785,9 +1866,8 @@ def cmd_init(args):
             entry["model"] = model
         roles_out.append(entry)
 
-    squad_name = args.squad or (f"{p_name} Team" if p_name else "Project Team")
-    if not auto:
-        squad_name = ask("Squad name", f"{p_name} Team")
+    if not auto and not uses_defaults:
+        squad_name = ask(f"  team name (Enter keeps {squad_name})", squad_name) or squad_name
 
     skills = [
         {"name": "multica-cli", "source": "url",
@@ -1803,15 +1883,7 @@ def cmd_init(args):
     # ---- autopilots ------------------------------------------------------------
     aps = []
     if not args.no_autopilots:
-        default_ap = (
-            {"key": "daily-standup", "name": "Daily standup", "assignee_role": "lead",
-             "mode": "create_issue", "cron": "30 8 * * 1-5", "timezone": tz,
-             "issue_title": "Standup — {{date}}"},
-            {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
-             "mode": "create_issue", "cron": "0 9 * * 1", "timezone": tz,
-             "issue_title": "Board hygiene — {{date}}"},
-        )
-        if auto:
+        if auto or uses_defaults:
             aps = [dict(a) for a in default_ap]
         else:
             picked = ask_toggle("Autopilots", ["daily-standup", "weekly-hygiene"],
