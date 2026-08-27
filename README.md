@@ -5,13 +5,13 @@ commands: a squad of agent teammates with clear roles and shared
 instructions, a kanban flow with explicit handoffs, and recurring
 automations — all created and kept in sync **through the `multica` CLI**.
 
-The result is a real working team, not four agents that all start shouting
-at once:
+## What you get
 
 - **A team** — Lead (coordinates, never implements), Engineer (builds),
   Reviewer (fresh-eyes checks), QA (verifies behavior), Release (ships
   approved work), Helper (workspace office). Each is a first-class Multica
-  agent with a written job description.
+  agent with a written job description — and the squad gets a random fun
+  name, like "Galloping Otter".
 - **A flow** — issues move Backlog → Todo → In Progress → In Review.
   Every handoff is one structured comment (`Done / Evidence / Questions /
   Ask` + an exact `@mention`). Agents never merge, never deploy, never set
@@ -19,97 +19,106 @@ at once:
 - **Automations** — a daily standup issue and a weekly board/repo hygiene
   pass run themselves and report to you.
 
-## Requirements
+## Start here
 
-- The [`multica` CLI](https://multica.ai/docs/cli), installed and logged in
-  (`multica auth status`, `multica daemon status`) — this tool drives
-  Multica exclusively through it, so it works the same against Multica
-  Cloud or a self-hosted instance (CLI profile decides).
-- At least one online runtime in the target workspace (a connected
-  computer with AI coding tools — Claude Code, Codex, Grok, opencode, pi,
-  …). `check` tells you which runtimes exist and which are online.
-- Python 3.10+ (standard library only — no pip installs).
-
-## Quickstart
+### Easiest: just run it
 
 ```bash
-# Just run it — it shows a menu and asks the questions:
-# new project (guided wizard), or pick an existing manifest
-# (check / plan / apply / status / smoke / teardown).
-#
-# The wizard asks ~3 questions (workspace, project name), then shows
-# exactly what it will create — press Enter to proceed with the defaults
-# (the team gets a random fun name like "Galloping Otter"), or n to
-# customize roles, runtimes, repos, and automations.
 bin/multica-setup
+```
 
-# Or go straight to the wizard:
-bin/multica-setup init
+A menu appears. Pick **1) Start a new project**: you answer ~3 questions
+(workspace, project name), see exactly what will be created, and press
+Enter to proceed with the sensible defaults. When it's done, your team is
+live.
 
-# Non-interactive (scripts/CI) — same result, no prompts:
+### Or, straight to the wizard / scripted
+
+```bash
+bin/multica-setup init                                              # guided, no menu
 bin/multica-setup init --auto --new-workspace "My Project" \
   --slug my-project --project "My Project" --runtime opencode \
-  --roles lead,engineer,reviewer --smoke
+  --roles lead,engineer,reviewer --smoke                            # scripts/CI, no prompts
+```
 
-# Zero local files: store the spec in the project's description (in Multica):
+`--smoke` creates a throwaway issue and chases it through the whole flow,
+so you know it works end-to-end.
+
+### Zero local files
+
+```bash
 bin/multica-setup init --auto --in-project --new-workspace "My Project" \
   --slug my-project --project "My Project" --runtime opencode
-# ...then manage it with:
+```
+
+The spec is stored inside Multica (in the project's description), read
+back through the CLI — no manifest file, and anyone with the CLI can
+manage it:
+
+```bash
 bin/multica-setup --workspace my-project --project "My Project" apply
 ```
 
-If you stopped before `apply` (or ran with `--no-apply`), pick it up later
-with the manifest `init` wrote:
+### Day to day
 
 ```bash
-bin/multica-setup --manifest my-project.json apply   # idempotent — safe to re-run
-bin/multica-setup --manifest my-project.json smoke   # prove the flow end-to-end
-```
-
-(`--in-project` projects are picked up the same way, by workspace + project
-name instead of a file — or straight from the bare-run menu.)
-
-Then start working: create issues in the workspace and assign them to the
-squad (or directly to an agent when the owner is obvious). You will be
-`@`-mentioned when work lands in `in_review` — review, merge, done.
-
-```bash
-# Day to day:
 bin/multica-setup --manifest my-project.json status   # live team/board view
 multica issue create --title "Add X" --description-stdin < x.md   # then assign
 ```
 
-Prefer to hand-maintain a manifest instead of the guided `init`? Copy
-`templates/project.example.json` to `my-project.json`, fill it in, then run
-`check` → `plan` → `apply` → `smoke` as above.
+Create issues and assign them to the squad (or a single agent when the
+owner is obvious). You get `@`-mentioned when work lands in `in_review` —
+review, merge, done.
 
-**Manifests are your spec, not your state.** The `multica` CLI is the only
-source of truth for what exists in Multica — every command asks it live.
-The *spec* (workspace, project, team, runtimes, autopilots) can live in two
-places:
+### When you're done with it
 
-- **a local manifest file** (`<workspace>.json`, written by `init`) — a
-  desired-state specification you git-track and re-apply from, like a
-  terraform file; or
-- **inside Multica itself** (`init --in-project`) — the spec is stored in
-  the managed project's description and read back through the CLI, so
-  there are no local files at all and anyone with the CLI can manage the
-  project: `bin/multica-setup --workspace <slug> --project <name> <command>`.
+```bash
+bin/multica-setup --manifest my-project.json teardown --yes
+```
 
-Either way the spec is never data *about* Multica — it's your instructions
-for what to create. `plan`/`apply` diff it against live CLI state.
+Archives everything the tool created. To remove the workspace shell
+itself, delete the workspace in the Multica UI (the CLI can't).
 
-## Repository map
+## Pick your workflow
 
-| Path | What it is |
+| You want to… | Run |
 |---|---|
-| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
-| `templates/` | Manifest example + field reference |
-| `roles/` | Instruction templates per role (rendered into each agent) |
-| `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
-| `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
-| `autopilots/` | Runbooks: `daily-standup`, `weekly-hygiene` |
-| `docs/` | `how-it-works.md`, `flow.md` (the kanban + handoff contract), `runbook.md` (ops & troubleshooting) |
+| Just try it out | `bin/multica-setup` (menu) |
+| Set up a project, guided | `bin/multica-setup init` |
+| Set up in a script / CI | `bin/multica-setup init --auto --new-workspace … --project … --runtime …` |
+| No local files (spec lives in Multica) | `init --auto --in-project …`, then `--workspace <slug> --project <name> <command>` |
+| Hand-write your own spec | copy `templates/project.example.json` → `check` → `plan` → `apply` |
+| Manage a team/workspace you already have | `bin/multica-setup init --workspace <slug>` (or the menu: 2 → pick) |
+| See what would change (read-only) | `bin/multica-setup --manifest my-project.json plan` |
+
+## How it works
+
+**The spec is yours; the state is Multica's.** The `multica` CLI is the
+only source of truth for what exists — every command asks it live. Your
+*spec* (workspace, project, team, runtimes, automations) lives either in
+a local manifest file (git-track it like a terraform file) or inside
+Multica itself (`--in-project`). `plan` diffs the spec against live
+state; `apply` creates/updates whatever differs and is idempotent — safe
+to re-run any time.
+
+Apply works in this order: workspace → shared skills → agents → squad →
+project → autopilots. `smoke` then proves the flow with a throwaway issue.
+
+## Good to know
+
+- **One team per workspace.** Agents and squads are workspace-scoped, so
+  two managed projects in the same workspace would collide on names.
+- **Slugs are global on Multica Cloud** (all users share the namespace).
+  "workspace slug already exists" means someone else took it — pick a
+  longer slug, or `init --workspace <slug>` to adopt an existing one.
+- **Teardown archives, it doesn't delete.** If you tear down and re-create
+  in the same workspace, archived teammates are automatically restored.
+- **New workspace?** If its runtimes don't appear, your daemon may need a
+  re-login/restart; `check` tells you.
+- **Piped input never auto-applies.** In a script, use `--auto` (explicit);
+  interactively you get an "apply now?" prompt.
+- **Nothing merges, ships, or closes without you.** That's the design,
+  not a bug (see below).
 
 ## The one rule that matters most
 
@@ -122,10 +131,39 @@ never set `done`. The board is yours to move at the end of the line.
 - **Team shape**: drop or add roles in the manifest (`lead` is required;
   the others optional). Name agents whatever you like.
 - **Instructions & skills**: edit `roles/*.md`, `skills/*/SKILL.md`,
-  `squad/squad-instructions.md`, or `autopilots/*.md`, then re-run `apply`
-  — drift is synced to the workspace. Add new runbooks under `autopilots/`
-  and reference them by `key` in the manifest.
-- **Models & runtimes**: per-role `runtime` (provider or runtime name/ID)
-  and optional `model` / `thinking_level` overrides in the manifest.
-- **Teardown**: `bin/multica-setup --manifest my-project.json teardown --yes`
-  archives everything the tool created (workspace deletion is UI-only).
+  `squad/squad-instructions.md`, or `autopilots/*.md`, then re-run
+  `apply` — drift is synced to the workspace. Add new runbooks under
+  `autopilots/` and reference them by `key` in the manifest.
+- **Models & runtimes**: per-role `runtime` (provider or runtime
+  name/ID) and optional `model` / `thinking_level` overrides.
+
+## Requirements
+
+- The [`multica` CLI](https://multica.ai/docs/cli), installed and logged
+  in (`multica auth status`, `multica daemon status`) — this tool drives
+  Multica exclusively through it, so it works the same against Multica
+  Cloud or a self-hosted instance (CLI profile decides).
+- At least one online runtime in the target workspace (a connected
+  computer with AI coding tools — Claude Code, Codex, Grok, opencode,
+  pi, …). `check` tells you which runtimes exist and which are online.
+- Python 3.10+ (standard library only — no pip installs).
+
+## Docs & troubleshooting
+
+- [`docs/runbook.md`](docs/runbook.md) — operations: the menu, the
+  commands, what a run does, and fixes for common failures.
+- [`docs/how-it-works.md`](docs/how-it-works.md) — the design.
+- [`docs/flow.md`](docs/flow.md) — the kanban + handoff contract the
+  agents follow.
+
+## Repository map
+
+| Path | What it is |
+|---|---|
+| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
+| `templates/` | Manifest example + field reference |
+| `roles/` | Instruction templates per role (rendered into each agent) |
+| `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
+| `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
+| `autopilots/` | Runbooks: `daily-standup`, `weekly-hygiene` |
+| `docs/` | `how-it-works.md`, `flow.md`, `runbook.md` |
