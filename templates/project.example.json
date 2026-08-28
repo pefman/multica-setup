@@ -116,5 +116,12 @@
       "timezone": "Europe/Stockholm",
       "issue_title": "Board hygiene — {{date}}"
     }
-  ]
+  ],
+  "mcp": {
+    "servers": {
+      "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
+      "firecrawl": {"url": "https://mcp.firecrawl.dev/mcp"}
+    },
+    "attach_to": ["engineer", "reviewer"]
+  }
 }
