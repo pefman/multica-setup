@@ -75,6 +75,16 @@ MCP_PREREQS = {
     "firecrawl": (),
 }
 
+# ---- output color (TTY only, so piped and --output json stays clean) ----
+
+def _color(text, code):
+    try:
+        if not sys.stdout.isatty():
+            return text
+    except Exception:
+        return text
+    return "\033[%sm%s\033[0m" % (code, text)
+
 
 def node_install_command():
     """argv for installing Node.js on this machine, or None."""
@@ -902,15 +912,22 @@ class Plan:
     def __init__(self, dry):
         self.dry = dry
 
+    def _tag(self, kind):
+        code = {"create": "32", "import": "32", "update": "36",
+                "restore": "33", "delete": "31"}.get(kind)
+        if not code:
+            return f"[{kind:6}]"
+        return _color(f"[{kind:6}]", code)
+
     def log(self, kind, what, detail=None):
         verb = "would" if self.dry else "will" if kind == "create" else ("updated" if not self.dry else "would update")
-        line = f"[{kind:6}] {what}"
+        line = f"{self._tag(kind)} {what}"
         if detail:
             line += f" — {detail}"
         print(line)
 
     def ok(self, what, detail=None):
-        line = f"[ok    ] {what}"
+        line = f"[{_color('ok    ', '32')}] {what}"
         if detail:
             line += f" — {detail}"
         print(line)
@@ -919,7 +936,7 @@ class Plan:
         if self.dry:
             self.log(kind, what, detail)
             return
-        print(f"[{kind:6}] {what}" + (f" — {detail}" if detail else ""))
+        print(self._tag(kind) + f" {what}" + (f" — {detail}" if detail else ""))
         fn()
 
 
@@ -1400,8 +1417,9 @@ def cmd_check(args):
 
     def report(level, what, detail=""):
         nonlocal ok
-        mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}[level]
-        line = f"  [{mark}] {what}"
+        mark = {"ok": "OK", "warn": "WARN", "fail": "FAIL"}[level]
+        code = {"ok": "32", "warn": "33", "fail": "31"}[level]
+        line = f"  {_color(f'[{mark}]', code)} {what}"
         if detail:
             line += f" — {detail}"
         print(line)
@@ -1543,7 +1561,8 @@ def cmd_check(args):
                            f"'{exe}' not found on this machine (stdio server) — the runtime machine needs it; "
                            f"install it there or the agent will not have this tool")
 
-    print("== " + ("PASS" if ok else "PASS (with warnings)" if ok else "FAIL"))
+    verdict = "PASS" if ok else "FAIL"
+    print("== " + _color(verdict, "32" if ok else "31"))
     return 0 if ok else 1
 
 
@@ -1556,7 +1575,7 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
         try:
             ws_id = target_workspace_id(mc, args, manifest)
         except ManifestError as e:
-            print(f"FAIL: {e}")
+            print(_color("FAIL:", "31") + f": {e}")
             return 1
         if ws_id:
             mc.workspace_id = ws_id
@@ -1567,19 +1586,20 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
         if str(ws_id or "").startswith("dry-run") and dry:
             # Nothing exists yet: print what would be created, no live queries.
             n_skills = len(manifest.team.get("skills", []))
-            print(f"workspace: create {manifest.workspace['slug']} ({manifest.workspace.get('name')})")
-            print(f"project:   create {manifest.project['name']} "
+            cverb = _color("create", "32")
+            print(f"workspace: {cverb} {manifest.workspace['slug']} ({manifest.workspace.get('name')})")
+            print(f"project:   {cverb} {manifest.project['name']} "
                   f"({len(manifest.project.get('repos', []))} repo(s))")
             for r in manifest.roles:
-                print(f"agent:     create {r['name']} ({ROLES[r['role']]} on {r['runtime']})")
-            print(f"skills:    create/import {', '.join(s['name'] for s in manifest.team.get('skills', []))}")
-            print(f"squad:     create {manifest.team['squad_name']} "
+                print(f"agent:     {cverb} {r['name']} ({ROLES[r['role']]} on {r['runtime']})")
+            print(f"skills:    {_color('create/import', '32')} {', '.join(s['name'] for s in manifest.team.get('skills', []))}")
+            print(f"squad:     {cverb} {manifest.team['squad_name']} "
                   f"(leader {manifest.roles_by_role()['lead']['name']}, "
                   f"{sum(1 for r in manifest.squad_roles() if r['role'] != 'lead')} members)")
             for a in manifest.autopilots:
-                print(f"autopilot: create {a['name']} (cron {a['cron']} {a['timezone']})")
+                print(f"autopilot: {cverb} {a['name']} (cron {a['cron']} {a['timezone']})")
             if manifest.mcp_servers:
-                print(f"mcp:       create library entries: {', '.join(manifest.mcp_servers)} "
+                print(f"mcp:       {cverb} library entries: {', '.join(manifest.mcp_servers)} "
                       f"(assigned per attach_to)")
             print("\nplan complete — nothing was changed. Run `apply` to execute.")
             print("note: after `apply` creates the workspace, the daemon may need a "
@@ -1725,13 +1745,13 @@ def cmd_smoke(args):
     manifest, spec, mode = get_spec(args)
     ws_id = target_workspace_id(mc, args, manifest)
     if not ws_id:
-        print("FAIL: target workspace not found")
+        print(_color("FAIL:", "31") + ": target workspace not found")
         return 1
     mc.workspace_id = ws_id
     squads = {s.get("name"): s for s in mc.squad_list()}
     squad = manifest.team["squad_name"]
     if squad not in squads:
-        print(f"FAIL: squad '{squad}' not found in workspace — run apply first")
+        print(_color("FAIL:", "31") + f": squad '{squad}' not found in workspace — run apply first")
         return 1
 
     issue_desc = (
@@ -1761,7 +1781,7 @@ def cmd_smoke(args):
                     issue = v
                     break
     if not issue:
-        print(f"FAIL: could not determine issue key from: {created!r}")
+        print(_color("FAIL:", "31") + f": could not determine issue key from: {created!r}")
         return 1
     print(f"issue: {issue} (assigned to {squad}, status todo)")
 
@@ -1814,7 +1834,8 @@ def cmd_smoke(args):
     except MulticaError as e:
         print(f"cleanup note: {e}")
     passed = any("full chain" in e for e in evidence)
-    print("smoke: " + ("PASS" if passed else "INCOMPLETE — inspect the issue before trusting the setup"))
+    verdict = _color("PASS", "32") if passed else _color("INCOMPLETE — inspect the issue before trusting the setup", "33")
+    print("smoke: " + verdict)
     return 0 if passed else 2
 
 
@@ -2077,6 +2098,12 @@ def random_team_name(taken=None):
         if taken and name in taken:
             continue
         return name
+
+
+# Returned by cmd_init when the interactive wizard finished a full run
+# (check -> plan -> apply -> optional smoke); the caller exits to the shell
+# instead of looping back to the main menu.
+_WIZARD_DONE = object()
 
 
 def cmd_init(args):
@@ -2455,9 +2482,10 @@ def cmd_init(args):
         rc = cmd_apply(chain)
         if rc != 0:
             return rc
-        if args.smoke or (not auto and ask_yesno("Run smoke now?", True)):
+        if args.smoke:
             print()
-            return cmd_smoke(chain)
+            cmd_smoke(chain)
+        return _WIZARD_DONE
     else:
         if args.in_project:
             print("\nwarning: --in-project stores the spec in the project's description, but")
@@ -2487,7 +2515,11 @@ def menu_init_wizard():
                               model=None, squad=None, no_autopilots=False, no_apply=False,
                               smoke=False, out=None, force=True, profile=None, state=None,
                               manifest=None, in_project=False, mcp=None, timeout=600, poll=10)
-    return cmd_init(args)
+    rc = cmd_init(args)
+    if rc is _WIZARD_DONE:
+        print("\ngood luck with your project")
+        return True
+    return False
 
 
 def run_project_actions(source, profile=None):
@@ -2605,7 +2637,8 @@ def interactive_menu(preset_manifest=None, profile=None):
             return 0
         if v in ("", "1"):
             try:
-                menu_init_wizard()
+                if menu_init_wizard():
+                    return 0
             except (ManifestError, MulticaError) as e:
                 print(f"error: {e}")
         elif v == "2":
@@ -2717,7 +2750,8 @@ def main(argv=None):
     handlers = {"init": cmd_init, "check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
                 "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
     try:
-        return handlers[args.cmd](args)
+        rc = handlers[args.cmd](args)
+        return 0 if rc is _WIZARD_DONE else rc
     except (ManifestError, MulticaError) as e:
         print(f"error: {e}")
         return 1
