@@ -16,6 +16,7 @@ directly.
 | `bin/multica-setup` | The CLI (~2500 lines). Bare run = interactive menu; subcommands `init / check / plan / apply / status / smoke / teardown` |
 | `templates/project.example.json` | A complete runnable manifest |
 | `templates/project.schema.md` | Field reference for manifests — keep it in sync with the code |
+| `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) referenced by `--mcp` |
 | `roles/<role>.md` | Per-role agent instructions, rendered into each agent |
 | `skills/<name>/SKILL.md` | Shared skills (frontmatter `name:` + `description:`, then markdown) |
 | `squad/squad-instructions.md` | Squad routing/handoff/sign-off instructions |
@@ -72,6 +73,14 @@ runbooks in `GIT_AP_DEFS`, enabled only when repos are registered).
 Add a **skill**: `skills/<name>/SKILL.md` (frontmatter `name:` +
 `description:`) + the manifest's `skills` list (`source: local` or `url`,
 `attach_to: all` or a role list).
+
+Add an **MCP preset**: `templates/mcp/<name>.json` (mcpServers-format:
+`{"command","args"}` stdio or `{"url"}` hosted) + the name in `MCP_PRESETS`
+(top of `bin/multica-setup`, wizard toggle) + an entry in `MCP_BLURBS`
+(one line telling agents when to use it) + `MCP_PREREQS` if it is stdio +
+a line in `templates/project.schema.md`. Custom (non-preset) servers need
+no code change — they are plain manifest entries; `${ENV_VAR}` references
+in server configs expand at apply time, never store raw tokens.
 
 Calibrated CLI quirks the code depends on (multica 0.4.x — re-verify
 after CLI upgrades):

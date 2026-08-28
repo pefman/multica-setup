@@ -125,6 +125,11 @@ project → autopilots. `smoke` then proves the flow with a throwaway issue.
 - **Git autopilots need git in your runtime.** `pr-patrol` and `docs-check`
   are enabled only when you give `init` repositories. Your runtime machines
   need `git` (and `gh` for GitHub PR checks) installed.
+- **stdio MCP presets need node in your runtime.** `context7` runs as
+  `npx` on the runtime machine, so it needs `node`; hosted presets like
+  `firecrawl` need nothing locally. `init` can install node on the machine
+  it runs on (other runtime machines are on you), and `check` warns when
+  a prerequisite is missing.
 - **Nothing merges, ships, or closes without you.** That's the design,
   not a bug (see below).
 
@@ -144,6 +149,10 @@ never set `done`. The board is yours to move at the end of the line.
   `autopilots/` and reference them by `key` in the manifest.
 - **Models & runtimes**: per-role `runtime` (provider or runtime
   name/ID) and optional `model` / `thinking_level` overrides.
+- **MCP tools**: give the team external services with
+  `--mcp context7,firecrawl` (or the wizard's customize step). Presets
+  live in `templates/mcp/`; any `mcpServers`-format entry works as a
+  custom server. Keys are referenced as `${ENV_VAR}` — never in the file.
 
 ## Requirements
 
@@ -170,6 +179,7 @@ never set `done`. The board is yours to move at the end of the line.
 |---|---|
 | `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
 | `templates/` | Manifest example + field reference |
+| `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) used by `--mcp` |
 | `roles/` | Instruction templates per role (rendered into each agent) |
 | `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
 | `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |

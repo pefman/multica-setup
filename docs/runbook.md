@@ -77,6 +77,36 @@ still reach it — it's a probe, not a verdict).
 To change schedules/selection: edit the manifest's `autopilots` list
 (or the wizard's customize path, `n`), re-`apply`.
 
+## MCP servers (external tools for agents)
+
+The manifest's `mcp` section registers servers in the workspace's MCP
+library (`multica workspace mcp list`) and assigns them to agents
+(`multica agent mcp list <agent-id>`). Two transport shapes:
+
+- **stdio** (e.g. `context7`) — runs as a process **on the runtime
+  machine**, so that machine needs the binary (`node`/`npx` for
+  context7). `init` can install node on the machine it runs on (or print
+  the command), and `check` warns when a prerequisite is missing here.
+- **hosted** (e.g. `firecrawl`) — plain HTTP, no local prerequisites;
+  the keyless tier is rate-limited, a key raises it.
+
+Operational notes:
+
+- The server-side config is **write-only** — it may hold API tokens and
+  is never returned to anyone. So `apply` never re-pushes or diffs an
+  existing library entry; to change a server's config, edit the manifest
+  and use `multica workspace mcp update <name>`, or remove + re-add.
+- **Keys are references, not values**: write
+  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` and the
+  value is expanded from the environment at `apply` time. An unset
+  variable fails the apply and names the variable. Never put a raw token
+  in the manifest (it would land in git).
+- **Removal**: dropping a server from the manifest unassigns it from the
+  agents on the next `apply`; the library entry is kept (it may be shared)
+  — remove it explicitly with `multica workspace mcp remove <name>`.
+- The agent's instructions gain a short "MCP tools" section listing what
+  each attached server is for, so the agent actually reaches for it.
+
 ## The menu (bare `bin/multica-setup`)
 
 Lists **live workspaces from the multica CLI** (the source of truth).

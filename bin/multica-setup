@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import shutil
@@ -58,6 +59,42 @@ GIT_AP_DEFS = (
      "mode": "create_issue", "cron": "30 17 * * *",
      "issue_title": "Docs check — {{date}}"},
 )
+
+# Bundled MCP server presets (templates/mcp/<name>.json holds the config).
+# The manifest also accepts any custom mcpServers-format entry.
+MCP_DIR = REPO_ROOT / "templates" / "mcp"
+MCP_PRESETS = ["context7", "firecrawl"]
+MCP_BLURBS = {
+    "context7": "context7 — current, version-specific library docs; check it before "
+                "writing code against any framework or API you are not fully sure about",
+    "firecrawl": "firecrawl — web search and page scraping; use it for research, "
+                 "never for repository code",
+}
+MCP_PREREQS = {
+    "context7": ("node", "npx"),
+    "firecrawl": (),
+}
+
+
+def node_install_command():
+    """argv for installing Node.js on this machine, or None."""
+    if Path("/etc/arch-release").exists():
+        return ["sudo", "pacman", "-S", "nodejs", "npm"]
+    if shutil.which("apt-get"):
+        return ["sudo", "apt-get", "install", "-y", "nodejs", "npm"]
+    if shutil.which("dnf"):
+        return ["sudo", "dnf", "install", "-y", "nodejs", "npm"]
+    if shutil.which("brew"):
+        return ["brew", "install", "node"]
+    return None
+
+
+def detect_node_install():
+    """Human-readable install hint for this machine."""
+    cmd = node_install_command()
+    if cmd:
+        return " ".join(cmd)
+    return "install Node.js 20+ from https://nodejs.org"
 
 ROLE_BLURBS = {
     "lead": "Coordinates the team: triage, routing, tracking, delivery to the owner. Never implements.",
@@ -360,6 +397,27 @@ class Multica:
             args += ["--label", label]
         return self.j(args)
 
+    def workspace_mcp_list(self):
+        return self.j(["workspace", "mcp", "list"]) or []
+
+    def workspace_mcp_add(self, name, cfg):
+        # config via file, never on the command line (tokens must not hit
+        # shell history or ps)
+        path = write_tmp(json.dumps(cfg))
+        try:
+            return self.j(["workspace", "mcp", "add", name, "--server-config-file", str(path)])
+        finally:
+            os.unlink(path)
+
+    def agent_mcp_list(self, agent_id):
+        return unwrap_list(self.j(["agent", "mcp", "list", agent_id])) or []
+
+    def agent_mcp_add(self, agent_id, server_id):
+        return self.j(["agent", "mcp", "add", agent_id, server_id])
+
+    def agent_mcp_remove(self, agent_id, server_id):
+        return self.j(["agent", "mcp", "remove", agent_id, server_id])
+
     def repo_list(self):
         return unwrap_list(self.j(["repo", "list"]))
 
@@ -423,11 +481,26 @@ class Manifest:
     project: dict
     team: dict
     autopilots: list
+    mcp: dict
     path: Path
 
     @property
     def roles(self):
         return self.team["roles"]
+
+    @property
+    def mcp_servers(self):
+        return (self.mcp or {}).get("servers", {})
+
+    def mcp_attached(self, role):
+        """Servers attached to this role (empty when no mcp section)."""
+        servers = self.mcp_servers
+        if not servers:
+            return {}
+        att = (self.mcp or {}).get("attach_to", "all")
+        if att == "all" or role in (att or []):
+            return servers
+        return {}
 
     def roles_by_role(self):
         return {r["role"]: r for r in self.roles}
@@ -503,8 +576,16 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
             "timezone": a.get("timezone", "UTC"), "issue_title": a.get("issue_title"),
         })
 
+    mcp = raw.get("mcp") or {}
+    for name, cfg in (mcp.get("servers") or {}).items():
+        if not isinstance(cfg, dict) or not (cfg.get("url") or cfg.get("command")):
+            raise ManifestError(f"mcp.servers['{name}'] needs 'url' (http) or 'command' (stdio): {cfg}")
+    attach = mcp.get("attach_to", "all")
+    if attach != "all" and (not isinstance(attach, list) or any(r not in seen for r in attach)):
+        raise ManifestError(f"mcp.attach_to must be 'all' or a list of known roles: {attach}")
+
     return Manifest(workspace=ws, project=project, team=team,
-                    autopilots=autopilots, path=path or Path("."))
+                    autopilots=autopilots, mcp=mcp, path=path or Path("."))
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -667,6 +748,13 @@ def render_agent_instructions(manifest, role_spec, base_ctx):
     ctx["name"] = role_spec["name"]
     if manifest.team.get("routing", "hybrid") == "leader-only" and role_spec["role"] == "lead":
         tpl += "\n\n" + ROUTING_POLICY["leader-only"]
+    attached = manifest.mcp_attached(role_spec["role"])
+    if attached:
+        lines = [f"- {MCP_BLURBS.get(n, f'{n} — MCP server; see its tool list for what it provides')}"
+                 for n in attached]
+        tpl += ("\n\n## MCP tools\n"
+               "These MCP servers are attached to you on your runtime:\n"
+               + "\n".join(lines) + "\nPrefer them over guessing or re-deriving what they provide.")
     return render(tpl, ctx)
 
 
@@ -703,6 +791,33 @@ def resolve_runtime(spec_runtime, runtimes):
         f"(available providers: {', '.join(providers)}; "
         f"run `multica runtime list` for details)"
     )
+
+
+ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env_refs(cfg, where):
+    """Expand ${VAR} references from the environment; fail clearly if unset.
+
+    Keys are referenced by name in the manifest — values never live in the
+    repo. This keeps API tokens out of git while the CLI gets them on apply.
+    """
+    def sub(v):
+        if not isinstance(v, str):
+            return v
+        missing = [m for m in ENV_REF.findall(v) if not os.environ.get(m)]
+        if missing:
+            raise ManifestError(f"{where}: environment variable(s) not set: {', '.join(missing)}")
+        return ENV_REF.sub(lambda m: os.environ[m.group(1)], v)
+    out = {}
+    for k, v in cfg.items():
+        if isinstance(v, dict):
+            out[k] = {kk: sub(vv) for kk, vv in v.items()}
+        elif isinstance(v, list):
+            out[k] = [sub(x) for x in v]
+        else:
+            out[k] = sub(v)
+    return out
 
 
 def write_tmp(content):
@@ -995,6 +1110,65 @@ def a_id_from_list(mc, name):
         if a.get("name") == name:
             return a["id"]
     raise MulticaError(f"agent created but not found in list: {name}")
+
+
+def step_mcp(mc, manifest, agent_ids, plan, prev_managed=()):
+    """Register MCP servers in the workspace library and assign them to agents.
+
+    The library config is write-only on the server side (it may hold tokens),
+    so an existing entry is never re-pushed or diffed — only missing entries
+    are added. Removal: agent assignments of previously-managed servers that
+    left the spec are dropped; library entries are kept (they may be shared).
+    """
+    servers = manifest.mcp_servers
+    if not servers:
+        return {}
+    lib = {}
+    try:
+        lib = {s.get("name"): s.get("id") for s in mc.workspace_mcp_list() if s.get("name")}
+    except MulticaError:
+        pass
+    for name in servers:
+        if name in lib:
+            plan.ok(f"mcp {name}", "in workspace library (config not diffable — left as-is)")
+            continue
+        plan.log("create", f"mcp {name}", "add to workspace library")
+        if not plan.dry:
+            cfg = expand_env_refs(servers[name], f"mcp server '{name}'")
+            mc.workspace_mcp_add(name, cfg)
+    try:
+        lib = {s.get("name"): s.get("id") for s in mc.workspace_mcp_list() if s.get("name")}
+    except MulticaError:
+        pass
+    attach = (manifest.mcp or {}).get("attach_to", "all")
+    roles = [r["role"] for r in manifest.roles]
+    targets = roles if attach == "all" else [r for r in roles if r in attach]
+    names = manifest.agent_names_by_role()
+    for name, sid in ((n, lib.get(n)) for n in servers):
+        if not sid:
+            continue
+        for role in targets:
+            aid = agent_ids.get(names.get(role, ""), "")
+            if not aid:
+                continue
+            plan.log("create", f"mcp {name}", f"assigned to {role} agent (no-op if already assigned)")
+            if not plan.dry:
+                mc.agent_mcp_add(aid, sid)
+    for name in prev_managed:
+        if name in servers:
+            continue
+        sid = lib.get(name)
+        for role in targets:
+            aid = agent_ids.get(names.get(role, ""), "")
+            if aid and sid and not plan.dry:
+                try:
+                    mc.agent_mcp_remove(aid, sid)
+                except MulticaError:
+                    pass
+        plan.log("delete", f"mcp {name}",
+                 "no longer in spec — unassigned; kept in workspace library "
+                 "(remove manually with `multica workspace mcp remove` if unused)")
+    return {n: lib.get(n) for n in servers}
 
 
 def step_squad(mc, manifest, agent_ids, plan):
@@ -1352,6 +1526,23 @@ def cmd_check(args):
             report("warn", "autopilots",
                    f"repos are registered but {', '.join(missing_git)} is/are not in the manifest — add it/them for git watchkeeping")
 
+        # mcp servers — host prerequisites and unreferenced env vars
+        for name, cfg in manifest.mcp_servers.items():
+            for var in sorted({v for v in ENV_REF.findall(json.dumps(cfg)) if not os.environ.get(v)}):
+                report("warn", f"mcp {name}",
+                       f"references ${{'{var}'}} which is not set in THIS environment — the server will start unconfigured until you export it")
+            if "url" in cfg:
+                report("ok", f"mcp {name}", "hosted server — no local prerequisites")
+            for exe in MCP_PREREQS.get(name, (cfg.get("command"),)):
+                if not exe:
+                    continue
+                if shutil.which(exe):
+                    report("ok", f"mcp {name}", f"'{exe}' found on this machine")
+                else:
+                    report("warn", f"mcp {name}",
+                           f"'{exe}' not found on this machine (stdio server) — the runtime machine needs it; "
+                           f"install it there or the agent will not have this tool")
+
     print("== " + ("PASS" if ok else "PASS (with warnings)" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -1387,21 +1578,29 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
                   f"{sum(1 for r in manifest.squad_roles() if r['role'] != 'lead')} members)")
             for a in manifest.autopilots:
                 print(f"autopilot: create {a['name']} (cron {a['cron']} {a['timezone']})")
+            if manifest.mcp_servers:
+                print(f"mcp:       create library entries: {', '.join(manifest.mcp_servers)} "
+                      f"(assigned per attach_to)")
             print("\nplan complete — nothing was changed. Run `apply` to execute.")
             print("note: after `apply` creates the workspace, the daemon may need a "
                   "re-login/restart before its runtimes appear there.")
             return 0
 
+    prev_state = {}
+    if not dry and spec is None:
+        prev_state = load_state(state_path_for(manifest, args.state))
     step_workspace_registry(mc, manifest, plan)
     skill_ids = step_skills(mc, manifest, plan)
     agent_ids = step_agents(mc, manifest, skill_ids, plan)
+    step_mcp(mc, manifest, agent_ids, plan,
+             prev_state.get("created", {}).get("mcp_servers", []))
     step_squad(mc, manifest, agent_ids, plan)
     project_id = step_project(mc, manifest, agent_ids, plan, spec)
     step_autopilots(mc, manifest, agent_ids, project_id, plan)
 
     if not dry:
         if spec is None:
-            state = load_state(state_path_for(manifest, args.state))
+            state = prev_state
             state.update({
                 "workspace_slug": manifest.workspace.get("slug"),
                 "workspace_id": ws_id if ws_id and not str(ws_id).startswith("dry") else None,
@@ -1412,6 +1611,7 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
                     "skill_names": [s["name"] for s in manifest.team.get("skills", [])
                                     if s["source"] == "local"],
                     "autopilot_names": [a["name"] for a in manifest.autopilots],
+                    "mcp_servers": list(manifest.mcp_servers),
                 },
             })
             save_state(state_path_for(manifest, args.state), state)
@@ -1964,6 +2164,16 @@ def cmd_init(args):
                 break
             repos.append(line)
 
+    mcp_sel = []
+    if args.mcp:
+        for n in (s.strip() for s in args.mcp.split(",") if s.strip()):
+            if (MCP_DIR / f"{n}.json").exists():
+                mcp_sel.append(n)
+            elif auto:
+                missing.append(f"valid --mcp presets (available: {', '.join(MCP_PRESETS)}; got '{n}')")
+            else:
+                print(f"  (skipping unknown mcp preset '{n}' — available: {', '.join(MCP_PRESETS)})")
+
     # ---- defaults summary ------------------------------------------------------
     all_roles = list(ROLES)
     tz = local_tz()
@@ -2017,6 +2227,10 @@ def cmd_init(args):
                 print("                (register repos to enable them)")
         if ws.get("mode") == "new" and len(ws["slug"]) < 4:
             print("  hint:         short slugs are often already taken globally on Multica Cloud — a longer, unique slug is safer")
+        if mcp_sel:
+            print(f"  mcp:          {', '.join(mcp_sel)} (attached to all roles; the customize step can change this)")
+        else:
+            print("  mcp:          (none — add with --mcp context7,firecrawl or in the customize step)")
         uses_defaults = ask_yesno("\nProceed with defaults? (n = customize)", True)
 
     if not auto and not uses_defaults:
@@ -2128,6 +2342,37 @@ def cmd_init(args):
                 print("note: no git repos — pr-patrol & docs-check autopilots are off")
                 print("      (register repos to enable them)")
 
+    # ---- mcp --------------------------------------------------------------------
+    if not auto and not uses_defaults:
+        mcp_sel = ask_toggle("MCP servers (opt-in; presets in templates/mcp/)", MCP_PRESETS, mcp_sel)
+    if mcp_sel and auto:
+        print(f"note: mcp servers enabled: {', '.join(mcp_sel)}")
+    if "context7" in mcp_sel and not shutil.which("node"):
+        if auto:
+            print(f"note: context7 needs node on the runtime machine — not found on this one ({detect_node_install()})")
+        else:
+            print(f"note: context7 needs node+npx on the runtime machine — not found on this one.")
+            print(f"      this machine: {detect_node_install()}")
+            print("      other runtime machines: install node there yourself — the tool cannot reach them")
+            choice = ask_choice("What now?", ["install on this machine now", "skip — I'll handle it"], default_index=1)
+            if choice == 0:
+                cmd = node_install_command()
+                if not cmd:
+                    print(f"note: no known package manager here — install manually: {detect_node_install()}")
+                else:
+                    print(f"running: {' '.join(cmd)}")
+                    rc = subprocess.run(cmd).returncode
+                    if rc != 0 or not shutil.which("node"):
+                        print("note: node still missing — context7 will not work on this machine until it is installed")
+    if "context7" in mcp_sel and shutil.which("npx") and not auto:
+        if ask_yesno("Warm the context7 package cache now (avoids a slow first agent run)?", True):
+            print("warming context7 package cache (first run may take a minute)...")
+            try:
+                subprocess.run(["npx", "-y", "@upstash/context7-mcp", "--version"],
+                               timeout=300, capture_output=True)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"note: cache warm failed ({e}) — the first agent run will download it instead")
+
     if missing:
         print("init: missing required information for --auto mode:")
         for m in missing:
@@ -2144,6 +2389,12 @@ def cmd_init(args):
                  "roles": roles_out, "skills": skills},
         "autopilots": aps,
     }
+    if mcp_sel:
+        manifest_dict["mcp"] = {
+            "servers": {n: json.loads((MCP_DIR / f"{n}.json").read_text(encoding="utf-8"))
+                        for n in mcp_sel},
+            "attach_to": "all",
+        }
     out_path = None
     if args.in_project:
         # spec will be stored in the project's description by apply — no file
@@ -2235,7 +2486,7 @@ def menu_init_wizard():
                               description=None, repos=None, roles=None, runtime=None,
                               model=None, squad=None, no_autopilots=False, no_apply=False,
                               smoke=False, out=None, force=True, profile=None, state=None,
-                              manifest=None, in_project=False, timeout=600, poll=10)
+                              manifest=None, in_project=False, mcp=None, timeout=600, poll=10)
     return cmd_init(args)
 
 
@@ -2429,6 +2680,7 @@ def main(argv=None):
     ini.add_argument("--project", help="project name")
     ini.add_argument("--description", help="project description")
     ini.add_argument("--repos", nargs="*", help="repository URLs")
+    ini.add_argument("--mcp", help="comma list of MCP presets to enable (e.g. context7,firecrawl)")
     ini.add_argument("--roles", help="comma list of roles (lead is required), e.g. lead,engineer,reviewer")
     ini.add_argument("--runtime", help="runtime provider bound to all roles (e.g. opencode, grok, pi)")
     ini.add_argument("--model", help="model for all roles (default: runtime default)")

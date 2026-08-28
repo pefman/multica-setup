@@ -94,6 +94,33 @@ and `docs-check` (24h commit window vs docs; one backlog issue per gap).
 `init` enables the git two automatically when you give it repositories,
 and tells you which case happened.
 
+### `mcp` — external tools for agents (optional)
+
+Registers MCP servers in the workspace's MCP library and assigns them to
+agents. The stored configuration is **write-only** on the server side (it
+may hold API tokens and is never returned to anyone, not even the owner),
+so `apply` never re-pushes or diffs an existing library entry.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `servers` | yes | Map of server name → `mcpServers`-format entry: `{"command", "args"}` (stdio — runs on the runtime machine) or `{"url"}` (hosted HTTP, optionally `headers`). |
+| `attach_to` | no | `"all"` (default) or a list of roles — which agents get each listed server. |
+
+Bundled presets (`init --mcp context7,firecrawl`, or the wizard's
+customize step):
+- `context7` — up-to-date, version-specific library docs (stdio,
+  `npx @upstash/context7-mcp`, no key; the runtime machine needs node)
+- `firecrawl` — web search + scraping (hosted
+  `https://mcp.firecrawl.dev/mcp`; the keyless tier has usage limits —
+  raise them with a custom entry carrying
+  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}`)
+
+Any other server (GitHub, Playwright, Sentry, …) works as a custom entry
+in the same `servers` map. String values may reference environment
+variables as `${VAR_NAME}` — expanded from the local environment at apply
+time; **never put raw tokens in the manifest** (an unset variable fails
+the apply, naming the variable).
+
 ## Conventions the manifest bakes in
 
 - **No auto-merge, no auto-done, no auto-deploy.** Every delivery parks in
