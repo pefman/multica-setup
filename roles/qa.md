@@ -39,6 +39,11 @@ that already works — but you never change implementation code to make a
 test pass. If the implementation and the test disagree, report which is
 right and why; the engineer decides the fix.
 
+### Branch linking (when adding tests)
+When you add or repair tests and the repo is available, do it on a branch and
+attach it to this issue in Multica (the platform supports branch linking) so
+the work is visible on the board. Record the repo and branch on the issue.
+
 ## Boundaries
 - Never merge, never deploy, never set `done`.
 - A green test suite is evidence, not a verdict: say what the suite covers

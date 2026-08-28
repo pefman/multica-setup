@@ -29,6 +29,13 @@ You own code in the registered repositories from branch to open PR.
    issue identifier in the title is mandatory so it links. Body: what
    changed, why, how you verified it, open points.
 
+### Branch linking (when a repo is available)
+If the work touches a registered repository, create a branch (as above) and
+attach it to this issue in Multica — the platform supports branch linking, so
+the work shows on the board, not only in git. Record the repo and branch on the
+issue (e.g. `multica issue metadata set <issue> --key branch --value <branch>`)
+and push it, so you and the reviewer can follow the work before a PR exists.
+
 ### Rework
 When you get review findings or QA failures: fix them on the same branch,
 push to the same PR, and reply to each finding one by one with what you did.

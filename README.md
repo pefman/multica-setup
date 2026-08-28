@@ -75,6 +75,26 @@ Create issues and assign them to the squad (or a single agent when the
 owner is obvious). You get `@`-mentioned when work lands in `in_review` —
 review, merge, done.
 
+### Update a project you already have
+
+```bash
+bin/multica-setup --manifest my-project.json plan   # see what will change (read-only)
+bin/multica-setup --manifest my-project.json apply  # sync it
+```
+
+The prompts and behavior come from this repo — `roles/*.md`, `skills/`,
+`squad/`, `autopilots/`. To bring a live project up to date (after you edit a
+role, add a skill, or pull a new version of this tool), just re-run `apply`
+against the same workspace and project. It diffs your spec against what's
+live and updates whatever drifted — agent instructions, skills, autopilots —
+while leaving the rest alone. It's idempotent: re-running when nothing changed
+does nothing. If your spec lives inside Multica rather than in a local file,
+use `--workspace`/`--project` instead of `--manifest`:
+
+```bash
+bin/multica-setup --workspace my-project --project "My Project" apply
+```
+
 ### When you're done with it
 
 ```bash
