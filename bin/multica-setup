@@ -2518,6 +2518,7 @@ def menu_init_wizard():
     rc = cmd_init(args)
     if rc is _WIZARD_DONE:
         print("\ngood luck with your project")
+        print("to get started, send your idea to the Lead in a PM")
         return True
     return False
 
