@@ -44,7 +44,7 @@ that field as drift (fix it in the manifest when it becomes permanent).
 ## New project on the same team shape
 
 Just run `init` again — it writes a fresh manifest for the new workspace
-and chains `check` → `plan` → (ask) `apply` → (ask) `smoke`:
+and chains `check` → `plan` → (ask) `apply` → `kickoff` → (ask) `smoke`:
 
 ```bash
 bin/multica-setup init --new-workspace "My Other Project" \
@@ -55,6 +55,20 @@ Agents/skills/squads are per-workspace, so a new workspace gets a fresh copy
 of the team. To reuse a hand-tuned manifest instead, copy it, point it at
 the new workspace, adjust `project` + `repos`, run `check` → `plan` →
 `apply`.
+
+## The kickoff issue (first contact)
+
+Right after `apply`, `init` opens **`Kickoff: what should we start working
+on?`** — status `todo`, assigned to the squad, owner subscribed — and the
+lead posts one comment: it asks what you want to build (a few sentences
+is enough, no spec) and explains in three lines how a pitch becomes
+shipped work. Reply on the issue and the lead scopes your pitch into a
+real issue and links it back; you close the kickoff issue.
+
+- Skip it: `init --no-kickoff`.
+- Open one manually later: `bin/multica-setup --manifest my-project.json
+  kickoff` (no-op while a `Kickoff:` issue is open).
+- It never blocks anything: `init` does not wait for the lead's comment.
 
 ## The autopilots (what runs on its own)
 

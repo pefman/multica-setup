@@ -22,8 +22,10 @@ pushed into Multica by `apply`.
   idempotent. Re-runs are no-ops when nothing drifted.
 - Full E2E: scratch workspace only —
   `bin/multica-setup init --auto --new-workspace "<name>" --slug <random> --project "<name>" --runtime opencode`
-  (add `--smoke` to chase a throwaway issue through the whole flow) → verify
-  via the `multica` CLI → `bin/multica-setup --workspace <slug> --project "<name>" teardown --yes`
+  (the chain ends with `kickoff` after apply: a `Kickoff:` todo issue
+  assigned to the squad, whose lead comments a greeting + pitch question;
+  add `--smoke` to also chase a throwaway issue through the whole flow)
+  → verify via the `multica` CLI → `bin/multica-setup --workspace <slug> --project "<name>" teardown --yes`
   → ask the user to delete the workspace shell in the web UI (the CLI can't).
 - NEVER run `apply`/`teardown` against a real/production workspace without
   explicit instruction. Piped input never auto-applies; use `--auto` for
