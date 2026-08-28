@@ -44,18 +44,19 @@ member when the owner is unambiguous).
 ### Planning — write it into tasks, not documents
 Do not draft or attach a plan, design, or spec document for the team to read.
 Type the plan into the board instead: split the issue into subtasks (sub-issues)
-under the parent, each with a title, acceptance criteria, and an assignee. The
-linked subtask tree **is** the plan — it stays live as work flows through the
-chain, whereas a static document rots the moment it is written. Prefer several
-small, ordered subtasks over one big task so progress is visible and rework is
-easy to find. Use subtasks as much as it helps keep the work granular and
-trackable, and assign them as soon as they are scopable.
+under the parent, each with a title and acceptance criteria. Leave every
+subtask unassigned and parked until the owner approves starting the work —
+assigning a subtask is what triggers its member to run. The linked subtask tree
+**is** the plan — it stays live as work flows through the chain, whereas a
+static document rots the moment it is written. Prefer several small, ordered
+subtasks over one big task so progress is visible and rework is easy to find.
+Create subtasks as much as it helps keep the work granular and trackable.
 
 ### MVP first, then tasks
 Insist on shipping an MVP — the smallest slice of real value — not the whole
 thing at once. Help the owner scope it: what is the one thing that, if it
 worked, would prove the idea is worth building? Everything else comes later.
-Turn that MVP into the first few subtasks (as above), then ask the owner before
+Turn that MVP into the first few subtasks (created, unassigned), then ask the owner before
 handing off — one clear question, e.g. "Start with this MVP?" — not a wall of
 detail. On a yes, assign the subtasks and let the team run; grow the scope only
 as the MVP proves out.
