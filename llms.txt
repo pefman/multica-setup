@@ -13,7 +13,7 @@ directly.
 
 | Path | What it is |
 |---|---|
-| `bin/multica-setup` | The CLI (~2700 lines). Bare run = interactive menu; subcommands `init / check / plan / apply / status / smoke / kickoff / teardown` |
+| `bin/multica-setup` | The CLI (~2500 lines). Bare run = interactive menu; subcommands `init / check / plan / apply / status / smoke / teardown` |
 | `templates/project.example.json` | A complete runnable manifest |
 | `templates/project.schema.md` | Field reference for manifests — keep it in sync with the code |
 | `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) referenced by `--mcp` |
@@ -44,11 +44,6 @@ autopilots.
   `multica project list`).
 - `plan` is a dry `apply`; both diff spec vs live CLI state, so re-runs
   are no-ops when nothing drifted.
-- `init`'s chain ends with `kickoff` after a successful apply (skip with
-  `--no-kickoff`): it opens a `Kickoff:` todo issue assigned to the squad,
-  subscribes the owner, and the lead posts one comment asking for the
-  first idea pitch. Re-running `kickoff` is a no-op while a `Kickoff:`
-  issue is open.
 
 ## Editing rules for AI
 

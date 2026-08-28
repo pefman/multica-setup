@@ -34,9 +34,7 @@ A menu appears. Pick **1) Start a new project**: you answer ~4 questions
 (workspace, project name, git repos), see exactly what will be created,
 and press Enter to proceed with the sensible defaults. With git repos it
 also enables the **pr-patrol** and **docs-check** autopilots — and tells
-you so; without repos they stay off. When it's done, your team is live —
-the lead opens a kickoff issue and pings you in your inbox: tell it what
-to start working on (a few sentences is enough).
+you so; without repos they stay off. When it's done, your team is live.
 
 ### Or, straight to the wizard / scripted
 
@@ -49,9 +47,7 @@ bin/multica-setup init --auto --new-workspace "My Project" \
 ```
 
 `--smoke` creates a throwaway issue and chases it through the whole flow,
-so you know it works end-to-end. (After `apply` the kickoff issue is
-opened automatically — the lead greets you and asks for your first pitch;
-`--no-kickoff` skips it.)
+so you know it works end-to-end.
 
 ### Zero local files
 
@@ -111,9 +107,7 @@ state; `apply` creates/updates whatever differs and is idempotent — safe
 to re-run any time.
 
 Apply works in this order: workspace → shared skills → agents → squad →
-project → autopilots, then `kickoff` opens the first issue — the lead
-pings you and asks for your first idea pitch. `smoke` proves the whole
-flow with a throwaway issue.
+project → autopilots. `smoke` then proves the flow with a throwaway issue.
 
 ## Good to know
 
@@ -183,7 +177,7 @@ never set `done`. The board is yours to move at the end of the line.
 
 | Path | What it is |
 |---|---|
-| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / kickoff / teardown`) |
+| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
 | `templates/` | Manifest example + field reference |
 | `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) used by `--mcp` |
 | `roles/` | Instruction templates per role (rendered into each agent) |

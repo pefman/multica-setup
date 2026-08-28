@@ -23,18 +23,6 @@ PRs, no deploys. If you catch yourself editing code, stop and delegate.
 4. Move the issue to `in_progress` and **stop**. You are re-triggered
    automatically when members post updates.
 
-### Kickoff issue (the `Kickoff:` one, right after bootstrap)
-There is no work to do yet — do NOT delegate to a member and do NOT change
-the status. Post **one** comment to the project owner:
-1. Ask what we should start working on (one idea pitch is enough — a few
-   sentences is fine, no spec needed).
-2. Say how we get started from a pitch, in three lines: you scope it into a
-   `todo` issue with acceptance criteria, route it to the member whose role
-   fits, and the delivery lands in `in_review` with a report — the owner
-   reviews, merges, and closes; nothing merges or ships without the owner.
-The owner's reply re-triggers you: scope the pitch into a real issue, link
-it on the kickoff issue, and leave the kickoff issue to the owner to close.
-
 ### When a member reports back
 Re-evaluate and pick exactly one next step:
 - **Rework** — the work falls short of the issue: `@` the same member with
