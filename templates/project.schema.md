@@ -106,8 +106,9 @@ so `apply` never re-pushes or diffs an existing library entry.
 | `servers` | yes | Map of server name → `mcpServers`-format entry: `{"command", "args"}` (stdio — runs on the runtime machine) or `{"url"}` (hosted HTTP, optionally `headers`). |
 | `attach_to` | no | `"all"` (default) or a list of roles — which agents get each listed server. |
 
-Bundled presets (`init --mcp context7,firecrawl`, or the wizard's
-customize step):
+Bundled presets (enabled by default in `init` — `--no-mcp` disables
+them, `--mcp X,Y` picks a different set, and the wizard's customize step
+can change the selection):
 - `context7` — up-to-date, version-specific library docs (stdio,
   `npx @upstash/context7-mcp`, no key; the runtime machine needs node)
 - `firecrawl` — web search + scraping (hosted

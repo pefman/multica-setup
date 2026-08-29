@@ -16,7 +16,7 @@ directly.
 | `bin/multica-setup` | The CLI (~2500 lines). Bare run = interactive menu; subcommands `init / check / plan / apply / status / smoke / teardown` |
 | `templates/project.example.json` | A complete runnable manifest |
 | `templates/project.schema.md` | Field reference for manifests — keep it in sync with the code |
-| `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) referenced by `--mcp` |
+| `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) — on by default in `init` (`--no-mcp` disables, `--mcp` overrides) |
 | `roles/<role>.md` | Per-role agent instructions, rendered into each agent |
 | `skills/<name>/SKILL.md` | Shared skills (frontmatter `name:` + `description:`, then markdown) |
 | `squad/squad-instructions.md` | Squad routing/handoff/sign-off instructions |

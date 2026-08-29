@@ -81,7 +81,9 @@ To change schedules/selection: edit the manifest's `autopilots` list
 
 The manifest's `mcp` section registers servers in the workspace's MCP
 library (`multica workspace mcp list`) and assigns them to agents
-(`multica agent mcp list <agent-id>`). Two transport shapes:
+(`multica agent mcp list <agent-id>`). `init` enables the bundled
+presets (`context7`, `firecrawl`) by default; `--no-mcp` turns them off
+and `--mcp X,Y` picks a different set. Two transport shapes:
 
 - **stdio** (e.g. `context7`) — runs as a process **on the runtime
   machine**, so that machine needs the binary (`node`/`npx` for

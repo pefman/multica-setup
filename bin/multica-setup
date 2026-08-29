@@ -1990,9 +1990,11 @@ def ask_yesno(prompt, default=True):
 
 def ask_toggle(prompt, names, defaults):
     shown = "  ".join(f"[{'x' if n in defaults else ' '}] {n}" for n in names)
-    v = ask(prompt + " " + shown + " — Enter to accept, or a comma list:")
+    v = ask(prompt + " " + shown + " — Enter to accept, or a comma list ('none' = all off):")
     if not v:
         return list(defaults)
+    if v.strip().lower() in ("none", "off", "-"):
+        return []
     sel = [n.strip() for n in v.split(",") if n.strip()]
     unknown = [n for n in sel if n not in names]
     if unknown:
@@ -2200,6 +2202,8 @@ def cmd_init(args):
                 missing.append(f"valid --mcp presets (available: {', '.join(MCP_PRESETS)}; got '{n}')")
             else:
                 print(f"  (skipping unknown mcp preset '{n}' — available: {', '.join(MCP_PRESETS)})")
+    elif not args.no_mcp:
+        mcp_sel = list(MCP_PRESETS)
 
     # ---- defaults summary ------------------------------------------------------
     all_roles = list(ROLES)
@@ -2257,7 +2261,7 @@ def cmd_init(args):
         if mcp_sel:
             print(f"  mcp:          {', '.join(mcp_sel)} (attached to all roles; the customize step can change this)")
         else:
-            print("  mcp:          (none — add with --mcp context7,firecrawl or in the customize step)")
+            print("  mcp:          (off — re-enable with --mcp context7,firecrawl)")
         uses_defaults = ask_yesno("\nProceed with defaults? (n = customize)", True)
 
     if not auto and not uses_defaults:
@@ -2371,9 +2375,12 @@ def cmd_init(args):
 
     # ---- mcp --------------------------------------------------------------------
     if not auto and not uses_defaults:
-        mcp_sel = ask_toggle("MCP servers (opt-in; presets in templates/mcp/)", MCP_PRESETS, mcp_sel)
-    if mcp_sel and auto:
-        print(f"note: mcp servers enabled: {', '.join(mcp_sel)}")
+        mcp_sel = ask_toggle("MCP servers (presets in templates/mcp/; 'none' = off)", MCP_PRESETS, mcp_sel)
+    if auto:
+        if mcp_sel:
+            print(f"note: mcp servers enabled: {', '.join(mcp_sel)}")
+        elif args.no_mcp:
+            print("note: mcp servers disabled (--no-mcp)")
     if "context7" in mcp_sel and not shutil.which("node"):
         if auto:
             print(f"note: context7 needs node on the runtime machine — not found on this one ({detect_node_install()})")
@@ -2514,7 +2521,8 @@ def menu_init_wizard():
                               description=None, repos=None, roles=None, runtime=None,
                               model=None, squad=None, no_autopilots=False, no_apply=False,
                               smoke=False, out=None, force=True, profile=None, state=None,
-                              manifest=None, in_project=False, mcp=None, timeout=600, poll=10)
+                              manifest=None, in_project=False, mcp=None, no_mcp=False,
+                              timeout=600, poll=10)
     rc = cmd_init(args)
     if rc is _WIZARD_DONE:
         print("\ngood luck with your project")
@@ -2714,7 +2722,8 @@ def main(argv=None):
     ini.add_argument("--project", help="project name")
     ini.add_argument("--description", help="project description")
     ini.add_argument("--repos", nargs="*", help="repository URLs")
-    ini.add_argument("--mcp", help="comma list of MCP presets to enable (e.g. context7,firecrawl)")
+    ini.add_argument("--mcp", help="comma list of MCP presets to enable (default: all presets)")
+    ini.add_argument("--no-mcp", action="store_true", help="disable all MCP servers (default: presets enabled)")
     ini.add_argument("--roles", help="comma list of roles (lead is required), e.g. lead,engineer,reviewer")
     ini.add_argument("--runtime", help="runtime provider bound to all roles (e.g. opencode, grok, pi)")
     ini.add_argument("--model", help="model for all roles (default: runtime default)")
