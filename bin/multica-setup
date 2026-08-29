@@ -2,20 +2,21 @@
 """multica-setup — bootstrap a working Multica project team.
 
 Run it bare for the interactive menu (new project wizard, or pick an
-existing manifest to check/plan/apply/status/smoke/teardown), or use a
-subcommand directly.
+existing manifest to check/plan/apply/status/smoke/kickoff/teardown), or use
+a subcommand directly.
 
 Reads a project manifest (see templates/project.schema.md) and creates or
 updates the whole setup through the `multica` CLI: workspace, repositories,
 skills, agents, squad, project, and autopilots.
 
 Subcommands:
-  init      Interactive (or --auto) manifest authoring, then check/plan/apply/smoke
+  init      Interactive (or --auto) manifest authoring, then check/plan/apply/kickoff/smoke
   check     Pre-flight: CLI, auth, daemon, runtimes, templates (read-only)
   plan      What apply would create/update (read-only)
   apply     Create/update everything the manifest describes (idempotent)
   status    Show the live state of the target workspace
   smoke     Run a throwaway issue through the squad to prove the flow works
+  kickoff   Open the kickoff issue: the lead pings the owner to start work
   teardown  Archive everything this tool created (needs --yes)
 
 Everything talks to Multica through the `multica` CLI; nothing here touches
@@ -467,6 +468,9 @@ class Multica:
         if issue:
             args += ["--issue", issue]
         return self.j(args)
+
+    def issue_subscribe(self, issue):
+        return self.j(["issue", "subscriber", "add", issue])
 
 
 def unwrap_list(x):
@@ -1640,7 +1644,7 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
             print(f"\nspec stored in project '{manifest.project['name']}' "
                   f"(workspace {manifest.workspace.get('slug')}) — manage it with:")
             print(f"  bin/multica-setup --workspace {manifest.workspace.get('slug')} "
-                  f"--project {manifest.project['name']} <check|plan|apply|status|smoke|teardown>")
+                  f"--project {manifest.project['name']} <check|plan|apply|status|smoke|kickoff|teardown>")
         print("next: create an issue and assign it to the squad "
               f"({manifest.team['squad_name']}) — or run `smoke` to verify the flow end-to-end.")
     else:
@@ -1837,6 +1841,76 @@ def cmd_smoke(args):
     verdict = _color("PASS", "32") if passed else _color("INCOMPLETE — inspect the issue before trusting the setup", "33")
     print("smoke: " + verdict)
     return 0 if passed else 2
+
+
+def cmd_kickoff(args):
+    mc = make_mc(args)
+    manifest, spec, mode = get_spec(args)
+    ws_id = target_workspace_id(mc, args, manifest)
+    if not ws_id:
+        print("FAIL: target workspace not found")
+        return 1
+    mc.workspace_id = ws_id
+    squads = {s.get("name"): s for s in mc.squad_list()}
+    squad = manifest.team["squad_name"]
+    if squad not in squads:
+        print(f"FAIL: squad '{squad}' not found in workspace — run apply first")
+        return 1
+
+    for i in unwrap_list(mc.j(["issue", "list", "--limit", "200"])):
+        if not isinstance(i, dict):
+            continue
+        if (i.get("title") or "").startswith("Kickoff:") \
+                and (i.get("status") or "") not in ("done", "cancelled"):
+            key = i.get("key") or i.get("identifier") or i.get("id")
+            print(f"kickoff: already open at {key} — nothing to do")
+            return 0
+
+    lead = manifest.roles_by_role()["lead"]["name"]
+    issue_desc = (
+        "Kickoff issue — there is no work here yet. This is your cue to greet the "
+        "project owner. Do NOT delegate to a member and do NOT change the status. "
+        "Post ONE comment to the project owner that: "
+        "1. asks what we should start working on (one idea pitch is enough — "
+        "a few sentences is fine, no spec needed); "
+        "2. briefly says how we get started from a pitch: you plan it into "
+        "parked subtasks, open a start-decision ticket for the owner, and "
+        "nothing starts building until the owner says go on that ticket — "
+        "deliveries then land in `in_review` with a report, and the owner "
+        "reviews, merges, and closes. "
+        "Keep it short: the question first, then the three-line start plan. "
+        "When the owner replies with a pitch, treat it as new scope: plan it "
+        "(see 'MVP first, then tasks'), open the start-decision ticket, link "
+        "the resulting issues here, and leave this kickoff issue to the owner "
+        "to close."
+    )
+    project_id = None
+    for p in mc.project_list():
+        if p.get("title") == manifest.project["name"]:
+            project_id = p["id"]
+            break
+    print(f"== multica-setup: kickoff via squad '{squad}' (lead: {lead}) ==")
+    created = mc.issue_create(
+        "Kickoff: what should we start working on?",
+        description=issue_desc, status="todo", assignee=squad, project_id=project_id)
+    issue = None
+    if isinstance(created, dict):
+        issue = created.get("key") or created.get("identifier") or created.get("title")
+        if not issue:
+            for v in created.values():
+                if isinstance(v, str) and re.match(r"^[A-Z]+-\d+$", v):
+                    issue = v
+                    break
+    if not issue:
+        print(f"FAIL: could not determine issue key from: {created!r}")
+        return 1
+    try:
+        mc.issue_subscribe(issue)
+    except MulticaError as e:
+        print(f"note: could not subscribe the owner explicitly: {e}")
+    print(f"issue: {issue} (assigned to {squad}, status todo)")
+    print(f"the lead ({lead}) will comment on {issue} shortly and ping you in your inbox.")
+    return 0
 
 
 def cmd_teardown(args):
@@ -2489,6 +2563,11 @@ def cmd_init(args):
         rc = cmd_apply(chain)
         if rc != 0:
             return rc
+        if not args.no_kickoff:
+            print()
+            rc = cmd_kickoff(chain)
+            if rc != 0:
+                return rc
         if args.smoke:
             print()
             cmd_smoke(chain)
@@ -2520,24 +2599,25 @@ def menu_init_wizard():
                               issue_prefix=None, workspace_description=None, project=None,
                               description=None, repos=None, roles=None, runtime=None,
                               model=None, squad=None, no_autopilots=False, no_apply=False,
-                              smoke=False, out=None, force=True, profile=None, state=None,
-                              manifest=None, in_project=False, mcp=None, no_mcp=False,
-                              timeout=600, poll=10)
+                              no_kickoff=False, smoke=False, out=None, force=True,
+                              profile=None, state=None, manifest=None, in_project=False,
+                              mcp=None, no_mcp=False, timeout=600, poll=10)
     rc = cmd_init(args)
     if rc is _WIZARD_DONE:
         print("\ngood luck with your project")
-        print("to get started, send your idea to the Lead in a PM")
+        print("the Lead will open a Kickoff: issue and ping you — tell it what to start with")
         return True
     return False
 
 
 def run_project_actions(source, profile=None):
-    """check/plan/apply/status/smoke/teardown loop for one project spec.
+    """check/plan/apply/status/smoke/kickoff/teardown loop for one project spec.
 
     source is {"manifest": path} (file mode) or
     {"workspace": slug, "project": title} (spec read back via the CLI)."""
     handlers = {"check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
-                "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
+                "status": cmd_status, "smoke": cmd_smoke, "kickoff": cmd_kickoff,
+                "teardown": cmd_teardown}
     is_file = "manifest" in source
     while True:
         if is_file:
@@ -2552,20 +2632,20 @@ def run_project_actions(source, profile=None):
             header = (f"workspace {source['workspace']} / project {source.get('project')} "
                       f"(spec in project description)")
         print(f"\n== {header} ==")
-        print("  1) check   2) plan   3) apply   4) status   5) smoke   6) teardown   b) back")
+        print("  1) check   2) plan   3) apply   4) status   5) smoke   6) kickoff   7) teardown   b) back")
         try:
-            v = input("action [1-6/b]: ").strip().lower()
+            v = input("action [1-7/b]: ").strip().lower()
         except EOFError:
             return
         if v in ("b", "back", "q", "quit"):
             return
         if not v:
             continue
-        if v not in ("1", "2", "3", "4", "5", "6"):
-            print("  (pick 1-6 or b)")
+        if v not in ("1", "2", "3", "4", "5", "6", "7"):
+            print("  (pick 1-7 or b)")
             continue
         name = {"1": "check", "2": "plan", "3": "apply", "4": "status",
-                "5": "smoke", "6": "teardown"}[v]
+                "5": "smoke", "6": "kickoff", "7": "teardown"}[v]
         yes = False
         if name == "teardown":
             if not ask_yesno("  archive everything this tool created in this workspace?", False):
@@ -2714,7 +2794,7 @@ def main(argv=None):
     ap.add_argument("--state", help="state file path (default: <manifest dir>/.multica-bootstrap-state.json)")
     sub = ap.add_subparsers(dest="cmd")
 
-    ini = sub.add_parser("init", help="interactive: author a manifest, then check/plan/apply/smoke")
+    ini = sub.add_parser("init", help="interactive: author a manifest, then check/plan/apply/kickoff/smoke")
     ini.add_argument("--new-workspace", help="create a new workspace with this name")
     ini.add_argument("--slug", help="slug for the new workspace (default: derived from name)")
     ini.add_argument("--issue-prefix", help="issue prefix for the new workspace (default: derived)")
@@ -2734,6 +2814,7 @@ def main(argv=None):
                           "later commands use --workspace/--project)")
     ini.add_argument("--auto", action="store_true", help="non-interactive: answer everything from flags/defaults")
     ini.add_argument("--no-apply", action="store_true", help="stop after check+plan, do not run apply")
+    ini.add_argument("--no-kickoff", action="store_true", help="skip the kickoff issue after apply")
     ini.add_argument("--smoke", action="store_true", help="run the smoke test after apply (with --auto)")
     ini.add_argument("--out", help="manifest output path (default: <workspace-slug>.json)")
     ini.add_argument("--force", action="store_true", help="overwrite an existing manifest file")
@@ -2745,6 +2826,7 @@ def main(argv=None):
     sp = sub.add_parser("smoke", help="run a throwaway issue through the squad")
     sp.add_argument("--timeout", type=int, default=600, help="max wait seconds (default 600)")
     sp.add_argument("--poll", type=int, default=10, help="poll interval seconds (default 10)")
+    sub.add_parser("kickoff", help="open the kickoff issue: the lead pings the owner to start work")
     st = sub.add_parser("teardown", help="archive what this tool created")
     st.add_argument("--yes", action="store_true", help="actually do it")
 
@@ -2758,7 +2840,8 @@ def main(argv=None):
         ap.error("check needs --manifest or --workspace")
 
     handlers = {"init": cmd_init, "check": cmd_check, "plan": cmd_plan, "apply": cmd_apply,
-                "status": cmd_status, "smoke": cmd_smoke, "teardown": cmd_teardown}
+                "status": cmd_status, "smoke": cmd_smoke, "kickoff": cmd_kickoff,
+                "teardown": cmd_teardown}
     try:
         rc = handlers[args.cmd](args)
         return 0 if rc is _WIZARD_DONE else rc

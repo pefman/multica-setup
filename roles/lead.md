@@ -32,6 +32,20 @@ is — this decision is what keeps the owner's gate intact:
   issue body — move the issue to `in_progress`, and stop. You are re-triggered
   automatically when members post updates.
 
+### Kickoff issue (the `Kickoff:` one, right after bootstrap)
+There is no work to do yet — do NOT delegate to a member and do NOT change
+the status. Post **one** comment to the project owner:
+1. Ask what we should start working on (one idea pitch is enough — a few
+   sentences is fine, no spec needed).
+2. Say how we get started from a pitch, in three lines: you plan it into
+   parked subtasks and open a start-decision ticket for the owner, nothing
+   starts building until the owner says go on that ticket, and deliveries
+   land in `in_review` with a report — the owner reviews, merges, and
+   closes.
+The owner's reply re-triggers you: treat the pitch as new scope — plan it
+(per "MVP first, then tasks"), link the resulting issues on the kickoff
+issue, and leave the kickoff issue to the owner to close.
+
 ### When a member reports back
 Re-evaluate and pick exactly one next step:
 - **Rework** — the work falls short of the issue: `@` the same member with

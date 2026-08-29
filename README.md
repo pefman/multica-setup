@@ -34,7 +34,9 @@ A menu appears. Pick **1) Start a new project**: you answer ~4 questions
 (workspace, project name, git repos), see exactly what will be created,
 and press Enter to proceed with the sensible defaults. With git repos it
 also enables the **pr-patrol** and **docs-check** autopilots — and tells
-you so; without repos they stay off. When it's done, your team is live.
+you so; without repos they stay off. When it's done, your team is live —
+and the Lead opens a **kickoff issue** that pings you: tell it what to
+start working on.
 
 ### Or, straight to the wizard / scripted
 
@@ -47,7 +49,9 @@ bin/multica-setup init --auto --new-workspace "My Project" \
 ```
 
 `--smoke` creates a throwaway issue and chases it through the whole flow,
-so you know it works end-to-end.
+so you know it works end-to-end. (After `apply` the kickoff issue is
+opened automatically — the Lead greets you and asks for your first pitch;
+`--no-kickoff` skips it.)
 
 ### Zero local files
 
@@ -127,7 +131,9 @@ state; `apply` creates/updates whatever differs and is idempotent — safe
 to re-run any time.
 
 Apply works in this order: workspace → shared skills → agents → squad →
-project → autopilots. `smoke` then proves the flow with a throwaway issue.
+project → autopilots, then `kickoff` opens the first issue — the Lead
+pings you and asks for your first idea pitch. `smoke` proves the whole
+flow with a throwaway issue.
 
 ## Good to know
 
@@ -201,7 +207,7 @@ never set `done`. The board is yours to move at the end of the line.
 
 | Path | What it is |
 |---|---|
-| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / teardown`) |
+| `bin/multica-setup` | The bootstrap CLI — run it bare for the interactive menu, or use a subcommand (`init / check / plan / apply / status / smoke / kickoff / teardown`) |
 | `templates/` | Manifest example + field reference |
 | `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) — on by default in `init` (`--no-mcp` disables, `--mcp` overrides) |
 | `roles/` | Instruction templates per role (rendered into each agent) |
