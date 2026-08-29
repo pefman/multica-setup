@@ -54,6 +54,13 @@
         "max_concurrent_tasks": 1
       },
       {
+        "role": "docs",
+        "name": "Scribe",
+        "runtime": "pi",
+        "model": null,
+        "max_concurrent_tasks": 1
+      },
+      {
         "role": "helper",
         "name": "Scout",
         "runtime": "grok",
@@ -87,7 +94,8 @@
           "engineer",
           "reviewer",
           "qa",
-          "release"
+          "release",
+          "docs"
         ]
       },
       {

@@ -33,8 +33,8 @@ bin/multica-setup --manifest my-project.json apply    # sync it
 ```
 
 `apply` is idempotent: it creates what's missing and updates what drifted
-(instructions, skills, squad membership/instructions, autopilot runbooks
-and cron). It never deletes or archives on its own.
+(instructions, skills, squad membership/instructions, autopilot runbooks,
+cron, and assignee). It never deletes or archives on its own.
 
 Per-object tweaks that don't belong in the repo (one-off model change, WIP
 limit): use the CLI directly, e.g.
@@ -80,7 +80,7 @@ issue when you are done with it.
 | `stall-radar` | weekdays 13:00 | Nudges quiet `in_progress`/`blocked` issues **on their own issue** (@ the owner agent); escalates to you what it can't unblock | — |
 | `weekly-hygiene` | Monday 09:00 | Board↔merged-PR reconciliation, stale flags, repo hygiene pass, runtime disk usage | repos for the repo pass |
 | `pr-patrol` | daily 09:30 | Open PRs unmerged > 3d → @ author; unreviewed > 24h → nudge reviewer; **deletes branches of merged PRs** (safe); closed-unmerged > 14d and orphan branches → listed for your approval, never deleted | repos, `git` (+ `gh` for GitHub) in the runtime |
-| `docs-check` | daily 17:30 | 24h commit window vs README/docs/CHANGELOG; one `backlog` issue per concrete docs gap | repos, `git` in the runtime |
+| `docs-check` | daily 17:30 | 24h commit window vs README/docs/CHANGELOG; one `backlog` issue per concrete docs gap (assigned to the Docs role when the team has one, else left for the lead to route) | repos, `git` in the runtime |
 
 `init` always enables standup, stall-radar, and hygiene; **pr-patrol and
 docs-check are enabled only when you give it git repositories** — it tells

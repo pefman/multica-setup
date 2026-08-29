@@ -9,7 +9,8 @@ automations — all created and kept in sync **through the `multica` CLI**.
 
 - **A team** — Lead (coordinates, never implements), Engineer (builds),
   Reviewer (fresh-eyes checks), QA (verifies behavior), Release (ships
-  approved work), Helper (workspace office). Each is a first-class Multica
+  approved work), Docs (keeps the repositories' documentation in sync),
+  Helper (workspace office). Each is a first-class Multica
   agent with a written job description — and the squad gets a random fun
   name, like "Galloping Otter".
 - **A flow** — issues move Backlog → Todo → In Progress → In Review.
@@ -19,7 +20,8 @@ automations — all created and kept in sync **through the `multica` CLI**.
 - **Automations** — a weekday standup, a midday stall radar that nudges
   quiet work, and a weekly board/repo hygiene pass run themselves and
   report to you. Give it git repos and it adds a **PR patrol** (stale
-  PRs, branch cleanup) and a **docs check** (24h commits vs documentation)
+  PRs, branch cleanup) and a **docs check** (24h commits vs documentation,
+  run by the Docs role when the team has one)
   — and tells you it did.
 
 ## Start here

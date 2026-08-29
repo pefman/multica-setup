@@ -48,7 +48,7 @@ goes through the lead). Reflected in the squad instructions.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `role` | yes | One of `lead`, `engineer`, `reviewer`, `qa`, `release`, `helper` — selects the instruction template from `roles/<role>.md`. The `lead` role must be present (it is the squad leader). |
+| `role` | yes | One of `lead`, `engineer`, `reviewer`, `qa`, `release`, `docs`, `helper` — selects the instruction template from `roles/<role>.md`. The `lead` role must be present (it is the squad leader). |
 | `name` | yes | Agent name — must be unique in the workspace. |
 | `runtime` | yes | Provider of the runtime to bind (`grok`, `opencode`, `pi`, `claude`, `codex`, …) or an exact runtime name/ID. Resolved against the online runtimes of the target workspace. |
 | `model` | optional | Model identifier override (e.g. `claude-sonnet-4-6`, `local-llama-8080/qwen3.8-27b`). Empty/null = runtime default. |
@@ -90,7 +90,8 @@ the lead), `stall-radar` (weekday midday: nudges quiet in-flight issues on
 their own issue), `weekly-hygiene` (board + repo + disk maintenance pass),
 and the git runbooks `pr-patrol` (stale open/unreviewed PRs, deletes
 branches of merged PRs, lists other branch-cleanup candidates for approval)
-and `docs-check` (24h commit window vs docs; one backlog issue per gap).
+and `docs-check` (24h commit window vs docs; one backlog issue per gap;
+runs as the Docs role when the team has one, otherwise the lead).
 `init` enables the git two automatically when you give it repositories,
 and tells you which case happened.
 

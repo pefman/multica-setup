@@ -47,6 +47,7 @@ ROLES = {
     "reviewer": "Reviewer",
     "qa": "QA",
     "release": "Release",
+    "docs": "Docs",
     "helper": "Helper",
 }
 
@@ -113,6 +114,7 @@ ROLE_BLURBS = {
     "reviewer": "Fresh-eyes code review against the issue's requirements. Comments only, never edits.",
     "qa": "Verifies delivered work at runtime: tests, acceptance criteria, regressions.",
     "release": "Prepares and executes approved releases and deploys. Never merges, never ships unapproved work.",
+    "docs": "Owns the repositories' documentation: keeps README/docs/CHANGELOG in sync with code; closes docs-check gaps as PRs.",
     "helper": "Workspace office: issue triage support, board hygiene, answers. Never touches code.",
 }
 
@@ -714,6 +716,7 @@ ROUTE_TABLE = [
     ("reviewer", "Code review of a PR/branch"),
     ("qa", "Verify delivered behavior, run checks, regression pass"),
     ("release", "Prepare/execute an approved release or deploy"),
+    ("docs", "Documentation: write/update in-repo docs, close docs-check gaps"),
     ("helper", "Issue triage, board hygiene, questions, workspace chores"),
 ]
 
@@ -722,6 +725,7 @@ ROUTE_BULLETS = [
     ("reviewer", "A PR or branch that needs a quality pass"),
     ("qa", "Delivered work that needs behavioral verification"),
     ("release", "A release or deploy the owner has approved"),
+    ("docs", "Docs to write or keep in sync (incl. the 'Docs:' gap issues from docs-check)"),
     ("helper", "Triage, board hygiene, questions, workspace chores"),
 ]
 
@@ -1341,9 +1345,13 @@ def step_autopilots(mc, manifest, agent_ids, project_id, plan):
             if need_title:
                 diffs.append("issue title")
             need_project = (project_id and (det.get("project_id") in (None, "")
-                                            or det.get("project_id") != project_id))
+                                             or det.get("project_id") != project_id))
             if need_project:
                 diffs.append("project")
+            want_agent = agent_ids.get(assignee, "") if assignee else ""
+            need_agent = bool(want_agent) and (det.get("assignee_id") or "") != want_agent
+            if need_agent:
+                diffs.append(f"assignee -> {assignee}")
             sched = next((t for t in triggers if t.get("kind") == "schedule"), None)
             need_trigger_add = sched is None
             need_trigger_upd = (not need_trigger_add and (
@@ -1361,6 +1369,8 @@ def step_autopilots(mc, manifest, agent_ids, project_id, plan):
                         mc.autopilot_update(aid, issue_title=ap["issue_title"])
                     if need_project:
                         mc.autopilot_update(aid, project_id=project_id)
+                    if need_agent:
+                        mc.autopilot_update(aid, agent=want_agent)
                     if need_trigger_add:
                         mc.autopilot_trigger_add(aid, ap["cron"], ap["timezone"], label=ap["name"])
                     elif need_trigger_upd:
@@ -2419,7 +2429,7 @@ def cmd_init(args):
         {"name": "handoff-protocol", "source": "local", "attach_to": "all"},
         {"name": "kanban-contract", "source": "local", "attach_to": "all"},
         {"name": "pr-conventions", "source": "local",
-         "attach_to": ["lead", "engineer", "reviewer", "qa", "release"]},
+         "attach_to": ["lead", "engineer", "reviewer", "qa", "release", "docs"]},
         {"name": "delivery-report", "source": "local", "attach_to": "all"},
     ]
 
@@ -2427,6 +2437,10 @@ def cmd_init(args):
     for d in GIT_AP_DEFS:
         if repos and not any(a["key"] == d["key"] for a in default_ap):
             default_ap += (dict(d, timezone=tz),)
+    if repos and "docs" in selected:
+        for a in default_ap:
+            if a["key"] == "docs-check":
+                a["assignee_role"] = "docs"
     aps = []
     if not args.no_autopilots:
         if auto or uses_defaults:
