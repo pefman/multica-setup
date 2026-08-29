@@ -9,7 +9,7 @@ survives no matter which agent picks up an issue.
 | Column | Status | Who puts work here |
 |---|---|---|
 | Backlog | `backlog` | owner / lead (triage). **Parking lot — nothing triggers.** |
-| To Do | `todo` | lead/owner, once scoped with acceptance criteria. Assigning an agent here **starts** it. |
+| To Do | `todo` | lead/owner, once scoped with acceptance criteria. Assigning an agent here **starts** it — the lead only puts the first task of a new scope here on the owner's go in the start-decision ticket. |
 | In Progress | `in_progress` | the agent working it, set at the start of the work. |
 | In Review | `in_review` | the agent delivering. **The top of the agent world.** |
 | Done | `done` | **the owner.** No agent may set it. |
@@ -20,7 +20,9 @@ survives no matter which agent picks up an issue.
 
 ```
 owner/lead: write the issue, scope it            → backlog
-lead/owner: ready to start                       → todo, assign squad or agent
+lead:        plans subtasks (parked, unassigned) → backlog
+lead:        opens start-decision ticket, @owner → todo (owner's to answer)
+owner:       replies @lead: go                   → lead assigns first subtask
 lead:        routes to the engineer (@mention, adds constraints)
 engineer:    works, opens PR  ISSUE-12 <summary> → in_progress
 engineer:    hands off (@reviewer, Done/Evidence/Questions/Ask)
@@ -78,6 +80,9 @@ Rules that make it work:
 5. **One active issue per agent** (default concurrency 1): the board shows
    the queue, agents don't juggle behind it.
 6. A run that only answers questions leaves every status untouched.
+7. **The lead never self-starts new scope.** The first task of a scope
+   starts only on the owner's reply in the start-decision ticket
+   @-mentioning the lead; the approval lives on that ticket, not in chat.
 
 ## What you do (the human loop)
 
@@ -86,6 +91,10 @@ Rules that make it work:
   what's ready to scope.
 - **Watch**: the board + your inbox. The daily standup issue tells you the
   state of the world every morning; deliveries `@`-mention you.
+- **Go / no-go**: the lead parks the plan and opens a start-decision ticket
+  assigned to you. Your reply @-mentioning the lead is the recorded go —
+  without the @-mention the lead never hears it. Close the ticket when you
+  are done deciding.
 - **Review & merge**: open the PR (or ask for a local server), verify,
   merge or send it back with `@role` comments. Merge + close = `done`.
 - **Tune the team**: when an agent keeps making the same mistake, fix its

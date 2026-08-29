@@ -121,6 +121,12 @@ and adoption via `bin/multica-setup init --workspace <slug>` (add
 
 ## Troubleshooting
 
+**Parked build never starts after the owner said yes**
+A plain "yes" in chat triggers nobody — only the exact mention markdown
+does. Reply on the start-decision ticket with a comment that @-mentions
+the lead (copy the mention syntax from the squad roster). The approval is
+recorded on the ticket; from there the lead assigns the first subtask.
+
 **Tasks never start / issue stuck after assign**
 - `multica daemon status` — is the daemon running?
 - `multica runtime list` — is the runtime the agent is bound to **online**?

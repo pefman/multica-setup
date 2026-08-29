@@ -152,6 +152,9 @@ project → autopilots. `smoke` then proves the flow with a throwaway issue.
   a prerequisite is missing.
 - **Nothing merges, ships, or closes without you.** That's the design,
   not a bug (see below).
+- **Nothing starts without you either.** The lead parks the plan as
+  subtasks and opens a start-decision ticket assigned to you; only your
+  reply @-mentioning the lead starts the first task.
 
 ## The one rule that matters most
 

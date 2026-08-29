@@ -45,6 +45,23 @@ autopilots.
 - `plan` is a dry `apply`; both diff spec vs live CLI state, so re-runs
   are no-ops when nothing drifted.
 
+## Trigger model & start gate
+
+- `backlog` = parked: assigning/mentioning an agent there triggers
+  **nothing**; `todo` + assign-or-@-mention an agent **starts a run
+  immediately**.
+- The only trigger is the **exact mention markdown**
+  `[@Name](mention://agent/<uuid>)` (members use
+  `mention://member/<uuid>`). A hand-typed `@name` wakes nobody.
+  Human→agent mentions work, so the owner can wake the lead.
+- **Start gate:** the lead parks the MVP subtasks (backlog, unassigned)
+  and opens a start-decision ticket (child of the parent, `todo`,
+  assigned to the owner with `multica issue assign <id> --to "<owner>"
+  --no-start`). The owner's reply @-mentioning the lead is the recorded
+  go; only then does the lead assign the first subtask. The approval
+  lives on that ticket, not in chat. The deploy stage stays
+  owner-gated the same way.
+
 ## Editing rules for AI
 
 `bin/multica-setup`:
