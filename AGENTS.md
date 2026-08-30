@@ -2,7 +2,7 @@
 
 multica-setup bootstraps a Multica project team (agent squad + kanban flow +
 autopilots) from a JSON manifest. The tool is one Python file —
-`bin/multica-setup` (3.10+, standard library only, ~2700 lines) — that drives
+`bin/multica-setup` (3.10+, standard library only, ~2800 lines) — that drives
 Multica exclusively through the `multica` CLI (subprocess, `--output json`);
 it never calls any API directly. All other directories (`roles/`, `skills/`,
 `squad/`, `autopilots/`, `templates/mcp/`) are template data rendered and
@@ -14,6 +14,9 @@ pushed into Multica by `apply`.
 
 ## Commands (there is no test suite)
 
+- Subcommands: `init / check / plan / apply / status / smoke / kickoff /
+  teardown`; bare run = interactive menu. `check` is a read-only pre-flight
+  (CLI, auth, daemon, runtimes, templates).
 - After ANY edit to `bin/multica-setup`:
   `python3 -c "import ast; ast.parse(open('bin/multica-setup').read())"`
 - Dry run, no side effects (needs a logged-in `multica` CLI):
@@ -22,9 +25,10 @@ pushed into Multica by `apply`.
   idempotent. Re-runs are no-ops when nothing drifted.
 - Full E2E: scratch workspace only —
   `bin/multica-setup init --auto --new-workspace "<name>" --slug <random> --project "<name>" --runtime pi`
-  (the chain ends with `kickoff` after apply: a `Kickoff:` todo issue
-  assigned to the squad, whose lead comments a greeting + pitch question;
-  add `--smoke` to also chase a throwaway issue through the whole flow)
+(the chain ends with `kickoff` after apply, skip with `--no-kickoff`: a
+   `Kickoff:` todo issue assigned to the squad, whose lead comments a greeting
+   + pitch question; `--no-apply` stops after check+plan; add `--smoke` to
+   also chase a throwaway issue through the whole flow)
   → verify via the `multica` CLI → `bin/multica-setup --workspace <slug> --project "<name>" teardown --yes`
   → ask the user to delete the workspace shell in the web UI (the CLI can't).
 - NEVER run `apply`/`teardown` against a real/production workspace without
@@ -36,9 +40,8 @@ pushed into Multica by `apply`.
 - Flow: manifest → `Manifest` dataclass → `build_context()` → `render()` →
   `Multica` client → `Plan` steps in this order: workspace → skills → agents
   → squad → project → autopilots.
-- `render()` substitutes `{{key}}` strictly (bin/multica-setup:685): a key
-  missing from context, or left unrendered, raises `ManifestError`. Context
-  keys are exactly: `project_name`, `project_description`, `repo_list`,
+- `render()` substitutes `{{key}}` strictly: a key missing from context, or
+  left unrendered, raises `ManifestError`. Context keys are exactly: `project_name`, `project_description`, `repo_list`,
   `squad_name`, `issue_prefix`, `roster`, `routing_table`, `routing_bullets`,
   plus `<role>_name` per manifest role. Adding a `{{placeholder}}` to any
   template requires adding the key in `build_context()`.
@@ -51,7 +54,11 @@ pushed into Multica by `apply`.
   upgrades (list in `llms.txt`).
 - `pr-patrol` and `docs-check` autopilots are enabled only when git repos
   are registered (`GIT_AP_DEFS` in `cmd_init`); they need `git` (and `gh`)
-  on the runtime machines.
+  on the runtime machines. `docs-check` is assigned to the Docs role when
+  the team has one, otherwise to the lead.
+- `init` enables the bundled MCP presets (`context7`, `firecrawl`) by
+  default; `--no-mcp` disables, `--mcp a,b` overrides. Custom
+  mcpServers-format entries in the manifest work without code changes.
 
 ## Docs to keep in sync with any behavior change
 
