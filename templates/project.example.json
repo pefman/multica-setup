@@ -114,15 +114,6 @@
       "cron": "30 8 * * 1-5",
       "timezone": "Europe/Stockholm",
       "issue_title": "Standup — {{date}}"
-    },
-    {
-      "key": "weekly-hygiene",
-      "name": "Weekly board hygiene",
-      "assignee_role": "lead",
-      "mode": "create_issue",
-      "cron": "0 9 * * 1",
-      "timezone": "Europe/Stockholm",
-      "issue_title": "Board hygiene — {{date}}"
     }
   ],
   "mcp": {

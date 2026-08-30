@@ -62,10 +62,11 @@ Right after `apply`, `init` opens **`Kickoff: what should we start working
 on?`** — status `todo`, assigned to the squad, owner subscribed — and the
 lead posts one comment: it asks what you want to build (a few sentences
 is enough, no spec) and explains in three lines how a pitch becomes
-shipped work (it plans it into parked subtasks and opens a start-decision
-ticket; nothing builds until you say go on that ticket). Reply on the
-issue and the lead treats your pitch as new scope; once the scope is
-planned and linked, the lead closes the kickoff issue itself.
+shipped work (it plans one Feature with Research → Implement → Verify
+phases and opens a start-decision ticket; nothing builds until you say go
+on that ticket). Reply on the issue and the lead treats your pitch as new
+scope; once the feature is planned and linked, the lead closes the kickoff
+issue itself.
 
 - Skip it: `init --no-kickoff`.
 - Open one manually later: `bin/multica-setup --manifest my-project.json
@@ -82,15 +83,15 @@ planned and linked, the lead closes the kickoff issue itself.
 | `pr-patrol` | daily 09:30 | Open PRs unmerged > 3d → @ author; unreviewed > 24h → nudge reviewer; **deletes branches of merged PRs** (safe); closed-unmerged > 14d and orphan branches → listed for your approval, never deleted | repos, `git` (+ `gh` for GitHub) in the runtime |
 | `docs-check` | daily 17:30 | 24h commit window vs README/docs/CHANGELOG; one `backlog` issue per concrete docs gap (assigned to the Docs role when the team has one, else left for the lead to route) | repos, `git` in the runtime |
 
-`init` always enables standup, stall-radar, and hygiene; **pr-patrol and
-docs-check are enabled only when you give it git repositories** — it tells
-you which case happened ("…are ON because git repos are registered" /
-"…are OFF (register repos to enable them)"). `check` reminds you if repos
-are registered but the git runbooks are missing from the manifest, and
-warns if a repo is unreachable from your machine (the runtime machines may
-still reach it — it's a probe, not a verdict). All five close their own
-run issue after the report, so autopilot issues don't accumulate on the
-board.
+`init` enables **daily-standup only** by default. Stall-radar,
+weekly-hygiene, pr-patrol, and docs-check are opt-in (wizard customize, or
+add them to the manifest). Git runbooks only appear in the customize
+catalog when repositories are registered. `check` notes when repos are
+present but those git runbooks are not enabled (informational — standup-only
+is intentional). It also warns if a repo is unreachable from your machine
+(the runtime machines may still reach it — it's a probe, not a verdict).
+Enabled autopilots close their own run issue after the report, so run
+issues don't accumulate on the board.
 
 To change schedules/selection: edit the manifest's `autopilots` list
 (or the wizard's customize path, `n`), re-`apply`.
@@ -146,7 +147,7 @@ A plain "yes" in chat triggers nobody — only the exact mention markdown
 does. Reply on the start-decision ticket with a comment that @-mentions
 the lead (copy the mention syntax from the squad roster). The approval is
 recorded on the ticket, which the lead then closes; from there the lead
-assigns the first subtask.
+assigns Research (or the single issue, for trivial work).
 
 **Tasks never start / issue stuck after assign**
 - `multica daemon status` — is the daemon running?

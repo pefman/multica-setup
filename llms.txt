@@ -59,19 +59,19 @@ autopilots.
   `[@Name](mention://agent/<uuid>)` (members use
   `mention://member/<uuid>`). A hand-typed `@name` wakes nobody.
   Human→agent mentions work, so the owner can wake the lead.
-- **Start gate:** the lead parks the MVP subtasks (backlog, unassigned)
-  and opens a start-decision ticket (child of the parent, `todo`,
-  assigned to the owner with `multica issue assign <id> --to "<owner>"
-  --no-start`). The owner's reply @-mentioning the lead is the recorded
-  go; only then does the lead assign the first subtask. The approval
-  lives on that ticket, not in chat. The deploy stage stays
-  owner-gated the same way.
+- **Start gate:** the lead parks one Feature parent with three staged
+  children — Research → Implement → Verify (backlog, unassigned) — and
+  opens a start-decision ticket (child of the parent, `todo`, assigned to
+  the owner with `multica issue assign <id> --to "<owner>" --no-start`).
+  The owner's reply @-mentioning the lead is the recorded go; only then
+  does the lead assign Research. The approval lives on that ticket, not
+  in chat. The deploy stage stays owner-gated the same way.
 - **The board self-cleans:** the lead closes a delivery on the owner's
   approval plus the merged PR (evidence cited in a one-line close-out),
   closes start-decision / kickoff tickets after recording the decision,
-  and closes epic parents once all their subtasks are done. Every
-  autopilot run closes its own issue after the report. The owner's job
-  is to approve and merge — not to tidy the board.
+  and closes Feature parents once delivery is done. Every autopilot run
+  closes its own issue after the report. The owner's job is to approve
+  and merge — not to tidy the board.
 - **Manifest repos: use https URLs.** The daemon can't use the owner's
   SSH keys; with `git@…` the agents re-register the repo as https
   mid-run (both entries then stay registered).
@@ -98,8 +98,8 @@ Add an **autopilot runbook**: `autopilots/<key>.md` in the house voice
 explicit; output is ONE comment on the autopilot's own issue; on broken
 tooling post the failure and stop, never retry-loop) + a line in
 `templates/project.schema.md` + the repo map in README + the table in
-`docs/runbook.md`. Defaults live in `cmd_init` (`default_ap`; git-only
-runbooks in `GIT_AP_DEFS`, enabled only when repos are registered).
+`docs/runbook.md`. Defaults live in `cmd_init` (`default_ap` =
+standup-only; opt-in catalog in `OPTIONAL_AP_DEFS` + `GIT_AP_DEFS`).
 
 Add a **skill**: `skills/<name>/SKILL.md` (frontmatter `name:` +
 `description:`) + the manifest's `skills` list (`source: local` or `url`,

@@ -46,17 +46,25 @@ Rules:
 
 ## Handoff chains
 
-Standard chain for repo work: engineer → reviewer → (qa) → owner.
-- Engineer finishes → `@` reviewer (or lead, on squad-owned issues).
-- Reviewer says "changes requested" → `@` engineer with numbered findings.
-- Reviewer says "ready to merge" → `@` owner (or lead, who then reports to
-  the owner). The **owner merges** — no agent ever merges.
-- QA fails → `@` engineer with repro steps. QA passes → `@` owner.
+Default shape: Feature phases Research → Implement → Verify, then owner.
+- Research (engineer) finishes → `@` lead (lead assigns Implement).
+- Implement (engineer) finishes → `@` lead (lead assigns Verify) — or `@`
+  reviewer/QA when the issue was assigned to you directly.
+- Verify fails → `@` engineer with repro steps; rework on the **same PR**.
+- Verify passes → `@` lead; lead posts the delivery report on the
+  **Feature parent** and moves the parent to `in_review` for the owner.
+- Reviewer (code review on a direct assign) says "changes requested" → `@`
+  engineer with numbered findings. "Ready to merge" → `@` lead or owner.
+- The **owner merges** — no agent ever merges.
 
 On **squad-owned** issues the lead is the router: members report back to the
-lead (the lead is re-triggered automatically on member comments) and the
-lead issues the next handoff. On issues assigned to you **directly**, you
-hand off to the next role or the owner yourself.
+lead (the lead is re-triggered automatically on member comments and when a
+stage barrier completes) and the lead issues the next handoff. On issues
+assigned to you **directly**, you hand off to the next role or the owner
+yourself.
+
+Do not create new issues to hand off work. Phases already exist under the
+Feature; rework and polish stay on the same PR.
 
 ## When the next step is "the human"
 
@@ -77,3 +85,6 @@ clear ask lands in their inbox.
   else — pick one: answer it (if it's yours) or hand it off (if it's not).
 - Handing off work you have not verified at all. A handoff you cannot back
   with evidence is a request to redo it.
+- Opening a sibling ticket for docs, polish, or "next steps" instead of
+  handing off — say it in the handoff; the lead opens a new Feature later
+  if needed.

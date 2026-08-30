@@ -13,18 +13,17 @@ automations — all created and kept in sync **through the `multica` CLI**.
   Helper (workspace office). Each is a first-class Multica
   agent with a written job description — and the squad gets a random fun
   name, like "Galloping Otter".
-- **A flow** — issues move Backlog → Todo → In Progress → In Review.
-  Every handoff is one structured comment (`Done / Evidence / Questions /
-  Ask` + an exact `@mention`). Agents never merge and never deploy —
-  **you** review and merge, and once you approve the Lead closes the issue
-  with the evidence. The board keeps itself clean: decision tickets,
-  kickoff, epic parents, and autopilot runs are closed by the team.
-- **Automations** — a weekday standup, a midday stall radar that nudges
-  quiet work, and a weekly board/repo hygiene pass run themselves, report
-  to you, and close their own issue when done. Give it git repos and it
-  adds a **PR patrol** (stale PRs, branch cleanup) and a **docs check**
-  (24h commits vs documentation, run by the Docs role when the team has
-  one) — and tells you it did.
+- **A flow** — new work is planned as a **Feature** with three staged
+  phases (Research → Implement → Verify), one branch/PR per feature.
+  Issues move Backlog → Todo → In Progress → In Review. Every handoff is
+  one structured comment (`Done / Evidence / Questions / Ask` + an exact
+  `@mention`). Agents never merge and never deploy — **you** review and
+  merge, and once you approve the Lead closes the Feature with the
+  evidence. The board keeps itself clean: decision tickets, kickoff,
+  Feature parents, and autopilot runs are closed by the team.
+- **Automations** — a weekday standup runs by default, reports to you, and
+  closes its own issue. Stall radar, weekly hygiene, **PR patrol**, and
+  **docs check** are opt-in (customize or manifest).
 
 ## Start here
 
@@ -36,11 +35,10 @@ bin/multica-setup
 
 A menu appears. Pick **1) Start a new project**: you answer ~4 questions
 (workspace, project name, git repos), see exactly what will be created,
-and press Enter to proceed with the sensible defaults. With git repos it
-also enables the **pr-patrol** and **docs-check** autopilots — and tells
-you so; without repos they stay off. When it's done, your team is live —
-and the Lead opens a **kickoff issue** that pings you: tell it what to
-start working on.
+and press Enter to proceed with the sensible defaults (standup only;
+other autopilots stay off until you opt in). When it's done, your team is
+live — and the Lead opens a **kickoff issue** that pings you: tell it what
+to start working on.
 
 ### Or, straight to the wizard / scripted
 
@@ -153,9 +151,10 @@ flow with a throwaway issue.
   re-login/restart; `check` tells you.
 - **Piped input never auto-applies.** In a script, use `--auto` (explicit);
   interactively you get an "apply now?" prompt.
-- **Git autopilots need git in your runtime.** `pr-patrol` and `docs-check`
-  are enabled only when you give `init` repositories. Your runtime machines
-  need `git` (and `gh` for GitHub PR checks) installed.
+- **Autopilots default to standup only.** `init` enables `daily-standup`;
+  hygiene, stall-radar, pr-patrol, and docs-check are opt-in via customize
+  or the manifest. Git runbooks need `git` (and `gh` for GitHub) on the
+  runtime when you enable them.
 - **stdio MCP presets need node in your runtime.** `context7` runs as
   `npx` on the runtime machine, so it needs `node`; hosted presets like
   `firecrawl` need nothing locally. `init` can install node on the machine
@@ -165,10 +164,10 @@ flow with a throwaway issue.
   after your approval and the merged PR, the Lead closes the delivery;
   decision tickets and autopilot runs close themselves. The board cleans
   up without you, but the line stays yours (see below).
-- **Nothing starts without you either.** The lead parks the plan as
-  subtasks and opens a start-decision ticket assigned to you; only your
-  reply @-mentioning the lead starts the first task (the ticket then
-  closes itself with your decision recorded on it).
+- **Nothing starts without you either.** The lead parks a Feature
+  (Research → Implement → Verify) and opens a start-decision ticket
+  assigned to you; only your reply @-mentioning the lead starts Research
+  (the ticket then closes itself with your decision recorded on it).
 - **Use https repo URLs in the manifest.** Your daemon can't use your SSH
   keys; with `git@…` URLs the agents re-register the repo as https
   mid-run (which works, but you'll end up with both entries registered).
@@ -230,6 +229,6 @@ is theirs, the decisions are yours, and the board stays clean.
 | `roles/` | Instruction templates per role (rendered into each agent) |
 | `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
 | `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
-| `autopilots/` | Runbooks: `daily-standup`, `stall-radar`, `weekly-hygiene`, `pr-patrol`*, `docs-check`* (*git repos required) |
+| `autopilots/` | Runbooks: `daily-standup` (default), plus opt-in `stall-radar`, `weekly-hygiene`, `pr-patrol`, `docs-check` |
 | `docs/` | `how-it-works.md`, `flow.md`, `runbook.md` |
 | `llms.txt` | Guide for AI assistants editing this repository (repo map, editing rules, verification, conventions) |

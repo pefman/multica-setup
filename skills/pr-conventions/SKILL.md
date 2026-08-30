@@ -11,14 +11,14 @@ the board, and the owner can't tell what it is without opening it.
 
 ## Naming
 
-- **Branch**: `<issue-prefix>-<issue-number>-<short-kebab-slug>`
-  e.g. `MP-42-add-pricing-page`. The issue identifier goes first — that is
-  what the board matches on.
-- **Title**: `<ISSUE-PREFIX>-<n> <imperative summary>`
+- **Branch**: `<issue-prefix>-<feature-number>-<short-kebab-slug>`
+  e.g. `MP-42-add-pricing-page`. Use the **Feature parent** number (not a
+  phase child's number) so one branch covers Research→Implement→Verify.
+  The identifier goes first — that is what the board matches on.
+- **Title**: `<ISSUE-PREFIX>-<featureN> <imperative summary>`
   e.g. `MP-42 Add pricing page`. One line, what the change delivers. The
-  issue identifier in the title is **mandatory** — without it the PR will
-  not auto-link to the issue and the board's "Pull requests" panel stays
-  empty.
+  **feature** identifier in the title is **mandatory** — without it the PR
+  will not auto-link and the board's "Pull requests" panel stays empty.
 - **Body**: four short sections:
   - **What** — 2–4 lines: what changed and why (the issue's ask, in your words).
   - **How** — the approach in a sentence or two; link the issue.
@@ -29,16 +29,19 @@ the board, and the owner can't tell what it is without opening it.
 
 ## Rules
 
-- **One issue → one PR.** If a review finds changes, push to the **same
-  branch/PR** — never open a second PR to fix a first one.
+- **One Feature → one PR.** If a review finds changes, push to the **same
+  branch/PR** — never open a second PR to fix a first one. Record `pr_url`
+  / `branch` metadata on the Feature parent.
 - **You never merge.** Not even a green CI, not even a "ready to merge"
   review, not even if the owner says "it's fine, merge it" in a vague
   comment — the owner performs the merge (or explicitly assigns the merge
   to you in an issue, in writing, for that PR). If the owner @-mentions you
   with "merge it", confirm which PR, then merge **only that one**, and
   report the merge on the issue.
-- **Small is better.** If a branch grows beyond what the issue asks, split
-  the extra work into a new issue instead of smuggling it in.
+- **Stay inside the Feature.** If a branch grows beyond what the Feature
+  asks, note the extra as a follow-up in the handoff — the lead opens a
+  **new Feature parent** later. Do not smuggle scope in, and do not spawn
+  polish/docs sibling tickets yourself.
 - **Keep the branch current**: rebase onto the default branch before
   requesting review if it has drifted; re-resolve conflicts yourself, they
   are part of the delivery.

@@ -51,8 +51,16 @@ ROLES = {
     "helper": "Helper",
 }
 
-# Autopilots that only make sense with git repositories registered.
-# Enabled automatically when repos are given; the user is told either way.
+# Opt-in autopilots (off by default in init). Git ones only appear in the
+# customize catalog when repositories are registered.
+OPTIONAL_AP_DEFS = (
+    {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
+     "mode": "create_issue", "cron": "0 9 * * 1",
+     "issue_title": "Board hygiene — {{date}}"},
+    {"key": "stall-radar", "name": "Stall radar", "assignee_role": "lead",
+     "mode": "create_issue", "cron": "0 13 * * 1-5",
+     "issue_title": "Stall radar — {{date}}"},
+)
 GIT_AP_DEFS = (
     {"key": "pr-patrol", "name": "PR patrol", "assignee_role": "lead",
      "mode": "create_issue", "cron": "30 9 * * *",
@@ -1550,13 +1558,13 @@ def cmd_check(args):
                     report("warn", f"repo {label}",
                            f"unreachable from this machine ({detail[0] if detail else 'git ls-remote failed'}) — the runtime machine still needs access")
 
-        # git autopilots hint — repos registered but the git runbooks missing
+        # git autopilots tip — optional; standup-only is the default
         ap_keys = {a["key"] for a in manifest.autopilots}
         missing_git = [d["key"] for d in GIT_AP_DEFS
                        if manifest.project.get("repos") and d["key"] not in ap_keys]
         if missing_git:
-            report("warn", "autopilots",
-                   f"repos are registered but {', '.join(missing_git)} is/are not in the manifest — add it/them for git watchkeeping")
+            report("ok", "autopilots",
+                   f"repos registered; optional git runbooks not enabled ({', '.join(missing_git)}) — add to manifest to opt in")
 
         # mcp servers — host prerequisites and unreferenced env vars
         for name, cfg in manifest.mcp_servers.items():
@@ -1883,16 +1891,16 @@ def cmd_kickoff(args):
         "Post ONE comment to the project owner that: "
         "1. asks what we should start working on (one idea pitch is enough — "
         "a few sentences is fine, no spec needed); "
-        "2. briefly says how we get started from a pitch: you plan it into "
-        "parked subtasks, open a start-decision ticket for the owner, and "
-        "nothing starts building until the owner says go on that ticket — "
-        "deliveries then land in `in_review` with a report, and the owner "
-        "reviews, merges, and closes. "
+        "2. briefly says how we get started from a pitch: you turn it into one "
+        "Feature with Research → Implement → Verify phases, open a start-decision "
+        "ticket for the owner, and nothing starts building until the owner says "
+        "go on that ticket — deliveries then land in `in_review` with a report, "
+        "and the owner reviews and merges. "
         "Keep it short: the question first, then the three-line start plan. "
-        "When the owner replies with a pitch, treat it as new scope: plan it "
-        "(see 'MVP first, then tasks'), open the start-decision ticket, link "
-        "the resulting issues here, and leave this kickoff issue to the owner "
-        "to close."
+        "When the owner replies with a pitch, treat it as new scope: plan the "
+        "Feature (see 'Feature planning'), open the start-decision ticket, link "
+        "the resulting issues here, and close this kickoff issue yourself "
+        "(`done --no-start`)."
     )
     project_id = None
     for p in mc.project_list():
@@ -2267,7 +2275,7 @@ def cmd_init(args):
     repos = list(args.repos or [])
 
     if not auto and not repos:
-        print("\nGit repositories (the pr-patrol & docs-check autopilots need them):")
+        print("\nGit repositories (optional; enables git AP catalog entries if you opt in):")
         while True:
             try:
                 line = input("  one URL per line, blank line to skip: ").strip()
@@ -2296,15 +2304,10 @@ def cmd_init(args):
         {"key": "daily-standup", "name": "Daily standup", "assignee_role": "lead",
          "mode": "create_issue", "cron": "30 8 * * 1-5", "timezone": tz,
          "issue_title": "Standup — {{date}}"},
-        {"key": "weekly-hygiene", "name": "Weekly board hygiene", "assignee_role": "lead",
-         "mode": "create_issue", "cron": "0 9 * * 1", "timezone": tz,
-         "issue_title": "Board hygiene — {{date}}"},
-        {"key": "stall-radar", "name": "Stall radar", "assignee_role": "lead",
-         "mode": "create_issue", "cron": "0 13 * * 1-5", "timezone": tz,
-         "issue_title": "Stall radar — {{date}}"},
     )
+    ap_catalog = default_ap + tuple(dict(d, timezone=tz) for d in OPTIONAL_AP_DEFS)
     if repos:
-        default_ap += tuple(dict(d, timezone=tz) for d in GIT_AP_DEFS)
+        ap_catalog += tuple(dict(d, timezone=tz) for d in GIT_AP_DEFS)
     pool = [r for r in runtimes if r.get("status") == "online"] or runtimes
     default_rt = args.runtime or (pool[0]["provider"] if pool else "")
     taken_squads = set()
@@ -2334,12 +2337,10 @@ def cmd_init(args):
         else:
             for a in default_ap:
                 print(f"  autopilot:    {a['name']}  ({a['cron']}, {a['timezone']})")
-            if repos:
-                print("  note:         pr-patrol & docs-check are ON because git repos are registered")
-                print("                (your runtimes need git, plus gh for GitHub)")
-            else:
-                print("  note:         no git repos — pr-patrol & docs-check are OFF")
-                print("                (register repos to enable them)")
+            opt_names = [a["name"] for a in ap_catalog if a["key"] not in {d["key"] for d in default_ap}]
+            if opt_names:
+                print(f"  note:         other autopilots off by default ({', '.join(opt_names)})")
+                print("                — enable them in customize (n) or add to the manifest later")
         if ws.get("mode") == "new" and len(ws["slug"]) < 4:
             print("  hint:         short slugs are often already taken globally on Multica Cloud — a longer, unique slug is safer")
         if mcp_sel:
@@ -2415,6 +2416,8 @@ def cmd_init(args):
             model = m or None
         entry = {"role": role, "name": name, "runtime": rt_spec,
                  "max_concurrent_tasks": 1}
+        if role == "helper":
+            entry["in_squad"] = False
         if model:
             entry["model"] = model
         roles_out.append(entry)
@@ -2434,11 +2437,9 @@ def cmd_init(args):
     ]
 
     # ---- autopilots ------------------------------------------------------------
-    for d in GIT_AP_DEFS:
-        if repos and not any(a["key"] == d["key"] for a in default_ap):
-            default_ap += (dict(d, timezone=tz),)
+    catalog = [dict(a) for a in ap_catalog]
     if repos and "docs" in selected:
-        for a in default_ap:
+        for a in catalog:
             if a["key"] == "docs-check":
                 a["assignee_role"] = "docs"
     aps = []
@@ -2446,20 +2447,17 @@ def cmd_init(args):
         if auto or uses_defaults:
             aps = [dict(a) for a in default_ap]
         else:
-            keys = [a["key"] for a in default_ap]
-            picked = ask_toggle("Autopilots", keys, keys)
+            keys = [a["key"] for a in catalog]
+            default_keys = [a["key"] for a in default_ap]
+            picked = ask_toggle("Autopilots", keys, default_keys)
             for key in picked:
-                ap = dict(next(a for a in default_ap if a["key"] == key))
+                ap = dict(next(a for a in catalog if a["key"] == key))
                 ap["cron"] = ask(f"  {key} cron", ap["cron"])
                 ap["timezone"] = ask(f"  {key} timezone", ap["timezone"])
                 aps.append(ap)
         if auto:
-            if repos:
-                print("note: git repos registered — pr-patrol & docs-check autopilots are enabled")
-                print("      (runtimes need git, plus gh for GitHub)")
-            else:
-                print("note: no git repos — pr-patrol & docs-check autopilots are off")
-                print("      (register repos to enable them)")
+            print("note: autopilots default to daily-standup only")
+            print("      (add weekly-hygiene / stall-radar / pr-patrol / docs-check in the manifest to opt in)")
 
     # ---- mcp --------------------------------------------------------------------
     if not auto and not uses_defaults:

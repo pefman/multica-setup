@@ -67,7 +67,11 @@ goal/boundaries that every run sees.
 - **The leader is a router, not a worker**: it can't hide implementation
   problems behind "the squad handled it", and you see every routing
   decision on the issue timeline.
-- **Human checkpoints are structural, not a habit**: agents physically
-  can't `done` or merge, so the only way work closes is through you.
+- **Work is feature-sized**: one Feature parent, three staged phases
+  (Research → Implement → Verify), one branch/PR — not a swarm of
+  scaffold/docs/polish tickets.
+- **Human checkpoints are structural, not a habit**: members can't merge
+  and don't set `done`; the lead closes only with your approval + merge
+  evidence (or admin tickets). Work reaches you at `in_review`.
 - **Everything is re-runnable**: `apply` is idempotent and driven by the
   files in this repo — the team definition is versioned like code.

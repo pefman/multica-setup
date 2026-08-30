@@ -52,10 +52,10 @@ pushed into Multica by `apply`.
   envelopes; `MulticaError` wraps non-zero exits with the CLI's stderr.
   Envelope shapes are calibrated to multica 0.4.x — re-verify after CLI
   upgrades (list in `llms.txt`).
-- `pr-patrol` and `docs-check` autopilots are enabled only when git repos
-  are registered (`GIT_AP_DEFS` in `cmd_init`); they need `git` (and `gh`)
-  on the runtime machines. `docs-check` is assigned to the Docs role when
-  the team has one, otherwise to the lead.
+- Autopilot defaults: `default_ap` is standup-only. Optional runbooks live
+  in `OPTIONAL_AP_DEFS` + `GIT_AP_DEFS` (catalog / opt-in). Git ones need
+  `git` (and `gh`) on the runtime when enabled; `docs-check` is assigned
+  to the Docs role when the team has one, otherwise to the lead.
 - `init` enables the bundled MCP presets (`context7`, `firecrawl`) by
   default; `--no-mcp` disables, `--mcp a,b` overrides. Custom
   mcpServers-format entries in the manifest work without code changes.
@@ -75,7 +75,8 @@ reference), `llms.txt`.
 - **Autopilot**: `autopilots/<key>.md` (house voice: `## Steps` numbered,
   `## Boundaries` explicit, output is ONE comment on the autopilot's own
   issue) + a line in the schema + README repo map + `docs/runbook.md` table
-  + defaults in `cmd_init` (`default_ap`; git-only ones in `GIT_AP_DEFS`).
+  + catalog/defaults in `cmd_init` (`default_ap` = standup;
+  `OPTIONAL_AP_DEFS` / `GIT_AP_DEFS` for opt-in).
 - **Skill**: `skills/<name>/SKILL.md` (frontmatter `name:` + `description:`)
   + a `skills` manifest entry (`source: local` or `url`,
   `attach_to: all` or a role list).

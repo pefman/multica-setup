@@ -16,19 +16,28 @@ status change you make must be **true at the moment you make it** and
 | `backlog` | Parked. Not scoped or not yet wanted. **Nothing is triggered here** — assigning an agent to a backlog issue does not run it. | owner / lead (triage) |
 | `todo` | Scoped and ready to start. Assigning/mentioning an agent here **starts a run immediately**. | lead (triage) or owner |
 | `in_progress` | Actively being worked. The agent that is working it sets this **at the start** of its work. | the working agent |
-| `in_review` | A result exists and waits for the owner's eyes. This is the **highest status any agent may deliver to**. | the delivering agent |
+| `in_review` | A result exists and waits for the next eyes (lead or owner). This is the **highest status any member may deliver to**. | the delivering agent |
 | `blocked` | Cannot continue: waiting on the owner, another role, or the outside world. Always paired with a comment that names what is needed and from whom. | any agent, owner |
-| `done` | Closed out. **Owner only.** No agent ever sets this. | owner (or an integration the owner controls) |
+| `done` | Closed out. **Members never set this.** The lead may set `done --no-start` for board administration (feature close-out after owner approval + merged PR; start-decision / kickoff / finished phase children / autopilot-run issues). The owner may always set it. | owner / lead (admin only) |
 | `cancelled` | No longer pursued; the record stays. Owner (or lead with owner's go-ahead for scope cuts). | owner / lead |
 
 There is no fixed flow between statuses — but the ownership table above is
 fixed. If you are not the role that owns a transition, you don't make it.
 
+## Feature shape (how work is packed)
+
+Default unit of work is a **Feature parent** with three staged children:
+Research (stage 1) → Implement (stage 2) → Verify (stage 3). One branch and
+one PR per feature, keyed to the parent id. The Feature parent is what
+moves to `in_review` for the owner; phase children deliver to the lead.
+Trivial one-shot fixes may be a single issue — the lead decides.
+
 ## The rules that never bend
 
-1. **Agents never set `done`.** Ever. Delivery ends at `in_review`. If the
-   owner asks an agent to "close it out", the agent reports and the owner
-   moves it.
+1. **Members never set `done`.** Delivery ends at `in_review`. The lead
+   closes admin/delivery tickets with evidence as above; if the owner asks
+   a member to "close it out", the member reports and leaves `done` to the
+   lead or owner.
 2. **Agents never merge PRs and never deploy.** Those are owner actions
    (deploy may be *executed* by the release agent **after** the owner
    approves, per the release role's rules).
@@ -44,8 +53,8 @@ fixed. If you are not the role that owns a transition, you don't make it.
    block the first one first. The board shows the queue; don't juggle
    behind it.
 6. **Status follows the deliverable, not the effort.** "I worked hard on it"
-   is not `in_progress` forever; "the PR is open and reviewed" is
-   `in_review`, not `done`.
+   is not `in_progress` forever; "the PR is open and verified" is
+   `in_review` on the Feature parent, not `done`.
 
 ## Finishing a run: the 3-second check
 
@@ -69,3 +78,6 @@ Before you stop, answer three questions:
 - Custom statuses (if the workspace defines any, e.g. `code_review`) inherit
   their category's behavior: a `code_review` status in the `in_review`
   category is a valid delivery target and works like `in_review`.
+- Stage barriers: when every child in a Multica `--stage` group finishes,
+  the Feature parent's assignee (usually the lead) is woken to route the
+  next phase — that is expected, not a bug.

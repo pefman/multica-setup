@@ -92,8 +92,10 @@ and the git runbooks `pr-patrol` (stale open/unreviewed PRs, deletes
 branches of merged PRs, lists other branch-cleanup candidates for approval)
 and `docs-check` (24h commit window vs docs; one backlog issue per gap;
 runs as the Docs role when the team has one, otherwise the lead).
-`init` enables the git two automatically when you give it repositories,
-and tells you which case happened.
+`init` enables **daily-standup only** by default; the others are opt-in
+via the wizard customize step or by adding them to the manifest. Git
+runbooks only appear in the customize catalog when repositories are
+registered.
 
 ### `mcp` — external tools for agents (optional)
 
@@ -129,11 +131,16 @@ the apply, naming the variable).
   for the owner; merges and deploys are human actions. `done` is the
   exception to "no auto": the lead sets it on a delivery only after the
   owner's approval on the thread and the linked PR is merged, and it
-  closes start-decision / kickoff / epic / autopilot-run issues that no
-  longer serve a purpose — so the board self-cleans without you.
+  closes start-decision / kickoff / feature parents / autopilot-run issues
+  that no longer serve a purpose — so the board self-cleans without you.
+- **Features, not ticket spam**: new scope becomes one Feature parent with
+  three staged children (Research → Implement → Verify); one branch/PR per
+  feature. Docs ride Implement. Trivial fixes may be a single issue.
 - **Handoffs are one comment** (Done / Evidence / Questions / Ask + exact
   `@mention`), enforced by the `handoff-protocol` skill and the squad
   instructions.
 - **One active issue per agent** (`max_concurrent_tasks: 1` default).
 - **Backlog is a parking lot**: nothing triggers there; the lead (or you)
   promotes scoped work to `todo`.
+- **Helper is out of the squad by default** (`in_squad: false`) so it is
+  not mistaken for a delivery route.
