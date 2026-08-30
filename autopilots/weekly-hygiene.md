@@ -49,8 +49,13 @@ delete, or archive anything.
    - disk section (total, top-5, flag state, prune candidates if flagged);
    - "all clear" stated explicitly if nothing needed doing.
 
+7. **Close this issue** — `multica issue status <this issue> done
+   --no-start`. The report is the deliverable; leaving run issues open
+   only clutters the board.
+
 ## Boundaries
-- Status changes: only `→ done` with merged-PR evidence, always `--no-start`.
+- Status changes: only `→ done` with merged-PR evidence, plus closing
+  this issue in step 7; always `--no-start`.
 - Never cancel, delete, or archive issues; never reassign; never merge PRs,
   deploy, or touch production; never delete runtime files.
 - If tooling or the runtime is broken, post the failure on this issue and

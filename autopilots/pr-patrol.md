@@ -43,11 +43,16 @@ workspace), with `gh` CLI when available, otherwise via
    - delete-candidate lists (closed-unmerged, orphans);
    - "all clear" stated explicitly when a repo has nothing to report.
 
+6. **Close this issue** — `multica issue status <this issue> done
+   --no-start`. The report is the deliverable; leaving run issues open only
+   clutters the board.
+
 ## Boundaries
 - Destructive actions are limited to deleting remote branches of merged
   PRs, one at a time, with the PR number recorded in the report.
 - No force-pushes, no tag changes, no commits to any branch, no closing
-  or merging PRs, no issue status changes.
+  or merging PRs, no issue status changes except closing this issue in
+  step 6.
 - If a repository is unreachable or tooling is broken, report it and
   continue with the remaining repositories; if everything is broken, post
   the failure on this issue and stop — do not retry-loop.

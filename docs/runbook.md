@@ -64,8 +64,8 @@ lead posts one comment: it asks what you want to build (a few sentences
 is enough, no spec) and explains in three lines how a pitch becomes
 shipped work (it plans it into parked subtasks and opens a start-decision
 ticket; nothing builds until you say go on that ticket). Reply on the
-issue and the lead treats your pitch as new scope; you close the kickoff
-issue when you are done with it.
+issue and the lead treats your pitch as new scope; once the scope is
+planned and linked, the lead closes the kickoff issue itself.
 
 - Skip it: `init --no-kickoff`.
 - Open one manually later: `bin/multica-setup --manifest my-project.json
@@ -88,7 +88,9 @@ you which case happened ("…are ON because git repos are registered" /
 "…are OFF (register repos to enable them)"). `check` reminds you if repos
 are registered but the git runbooks are missing from the manifest, and
 warns if a repo is unreachable from your machine (the runtime machines may
-still reach it — it's a probe, not a verdict).
+still reach it — it's a probe, not a verdict). All five close their own
+run issue after the report, so autopilot issues don't accumulate on the
+board.
 
 To change schedules/selection: edit the manifest's `autopilots` list
 (or the wizard's customize path, `n`), re-`apply`.
@@ -143,7 +145,8 @@ and adoption via `bin/multica-setup init --workspace <slug>` (add
 A plain "yes" in chat triggers nobody — only the exact mention markdown
 does. Reply on the start-decision ticket with a comment that @-mentions
 the lead (copy the mention syntax from the squad roster). The approval is
-recorded on the ticket; from there the lead assigns the first subtask.
+recorded on the ticket, which the lead then closes; from there the lead
+assigns the first subtask.
 
 **Tasks never start / issue stuck after assign**
 - `multica daemon status` — is the daemon running?
@@ -192,8 +195,17 @@ That's a team-definition bug, not a one-off. Find the responsible
 
 **PR doesn't show on the issue / status doesn't flip**
 The PR title must carry the issue identifier (the `pr-conventions` skill
-enforces this: `ISSUE-12 Add X`). Connect GitHub in the workspace settings
-for auto-linking and CI display.
+enforces this: `ISSUE-12 Add X`), and the workspace must have GitHub
+connected in its settings (web UI) for auto-linking and CI display.
+Without the integration the team records the branch and PR on the issue
+as metadata (`pr_url`, `branch`) instead — check `multica issue metadata
+list <ISSUE>` for the live values.
+
+**Deliveries pile up in `in_review`**
+That queue is yours: approve in a comment on the delivery thread and
+merge the PR — the lead closes the issue once both are on record. If you
+approved but the merge hasn't landed, the item stays there and the
+standup lists it under "waiting on you" after 3 days.
 
 **Two agents arguing in a loop**
 The squad instructions cap rework at two rounds, then the lead escalates

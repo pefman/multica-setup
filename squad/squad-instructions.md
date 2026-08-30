@@ -28,14 +28,19 @@ needs no qa pass), but never skip the owner's sign-off.
   report for the owner is posted.
 
 ## Delivery and sign-off policy (the owner's red line)
-- **Nothing merges, ships, or closes without the owner.** The squad never
-  sets `done`, never merges a PR, never deploys.
+- **Nothing merges or ships without the owner.** The squad never merges a
+  PR and never deploys.
 - When the goal is met: post the delivery report to the owner (conclusion
   first, evidence, open decisions, the owner's next step) and leave the
   issue in `in_review`.
-- If the owner approves in a comment: thank them, and the owner performs
-  the merge/ship (or explicitly instructs a specific agent to do a specific
-  action, which that agent may then perform and report).
+- If the owner approves in a comment: the owner performs the merge/ship (or
+  explicitly instructs a specific agent to do a specific action, which that
+  agent may then perform and report). Once the approval is recorded and the
+  linked PR is merged, you set the issue to `done` with a one-line
+  close-out citing both.
+- Board administration is yours: close a start-decision ticket once the
+  go/no-go is recorded, the kickoff once the scope is planned, and an epic
+  parent once all its subtasks are done.
 - If the owner sends it back: treat it like rework — route it, track it,
   redeliver.
 

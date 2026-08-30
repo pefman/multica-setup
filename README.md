@@ -15,14 +15,16 @@ automations — all created and kept in sync **through the `multica` CLI**.
   name, like "Galloping Otter".
 - **A flow** — issues move Backlog → Todo → In Progress → In Review.
   Every handoff is one structured comment (`Done / Evidence / Questions /
-  Ask` + an exact `@mention`). Agents never merge, never deploy, never set
-  `done` — **you** review, merge, and close.
+  Ask` + an exact `@mention`). Agents never merge and never deploy —
+  **you** review and merge, and once you approve the Lead closes the issue
+  with the evidence. The board keeps itself clean: decision tickets,
+  kickoff, epic parents, and autopilot runs are closed by the team.
 - **Automations** — a weekday standup, a midday stall radar that nudges
-  quiet work, and a weekly board/repo hygiene pass run themselves and
-  report to you. Give it git repos and it adds a **PR patrol** (stale
-  PRs, branch cleanup) and a **docs check** (24h commits vs documentation,
-  run by the Docs role when the team has one)
-  — and tells you it did.
+  quiet work, and a weekly board/repo hygiene pass run themselves, report
+  to you, and close their own issue when done. Give it git repos and it
+  adds a **PR patrol** (stale PRs, branch cleanup) and a **docs check**
+  (24h commits vs documentation, run by the Docs role when the team has
+  one) — and tells you it did.
 
 ## Start here
 
@@ -79,7 +81,8 @@ multica issue create --title "Add X" --description-stdin < x.md   # then assign
 
 Create issues and assign them to the squad (or a single agent when the
 owner is obvious). You get `@`-mentioned when work lands in `in_review` —
-review, merge, done.
+review and merge; the Lead closes the issue once your approval and the
+merged PR are on record.
 
 ### Update a project you already have
 
@@ -158,17 +161,29 @@ flow with a throwaway issue.
   `firecrawl` need nothing locally. `init` can install node on the machine
   it runs on (other runtime machines are on you), and `check` warns when
   a prerequisite is missing.
-- **Nothing merges, ships, or closes without you.** That's the design,
-  not a bug (see below).
+- **Nothing merges or ships without you.** Closing is the team's bookkeeping:
+  after your approval and the merged PR, the Lead closes the delivery;
+  decision tickets and autopilot runs close themselves. The board cleans
+  up without you, but the line stays yours (see below).
 - **Nothing starts without you either.** The lead parks the plan as
   subtasks and opens a start-decision ticket assigned to you; only your
-  reply @-mentioning the lead starts the first task.
+  reply @-mentioning the lead starts the first task (the ticket then
+  closes itself with your decision recorded on it).
+- **Use https repo URLs in the manifest.** Your daemon can't use your SSH
+  keys; with `git@…` URLs the agents re-register the repo as https
+  mid-run (which works, but you'll end up with both entries registered).
+- **PR/CI on the board needs a GitHub integration.** Linking PRs and CI
+  status to issues is done by Multica watching GitHub (set it up in the
+  workspace settings, web UI). Without it, agents record the branch and
+  PR on the issue as metadata (`pr_url`, `branch`) instead — the board
+  stays accurate, the auto-links don't.
 
 ## The one rule that matters most
 
-**Nothing merges, ships, or closes without you.** Agents deliver to
-`in_review` with a delivery report; they never merge PRs, never deploy,
-never set `done`. The board is yours to move at the end of the line.
+**Nothing merges or ships without you.** Agents deliver to `in_review`
+with a delivery report; they never merge PRs and never deploy. After your
+approval and the merged PR, the Lead closes the issue — the bookkeeping
+is theirs, the decisions are yours, and the board stays clean.
 
 ## Customizing
 

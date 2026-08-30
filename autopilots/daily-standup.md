@@ -1,7 +1,7 @@
 Daily standup for **{{project_name}}** (workspace board review). You are
 reporting to the project owner. This run is **read-mostly**: you never
-change an issue's status, never reassign, never post to other issues. Your
-output is the report comment on this issue.
+change another issue's status, never reassign, never post to other issues.
+Your output is the report comment on this issue.
 
 ## Steps
 
@@ -35,8 +35,13 @@ output is the report comment on this issue.
    - "needs your decision" list.
    "All clear, nothing to do" is a valid report — say so explicitly.
 
+6. **Close this issue** — `multica issue status <this issue> done
+   --no-start`. The report is the deliverable; leaving run issues open
+   only clutters the board and inflates the counts you report tomorrow.
+
 ## Boundaries
-- Read-only on the board: no status changes, no assignments, no comments on
-  other issues, no agent triggering.
+- Read-only on the board, except closing this issue in step 6: no status
+  changes on other issues, no assignments, no comments on other issues, no
+  agent triggering.
 - If a tool or the runtime is broken, post the failure on this issue and
   stop — do not retry-loop.

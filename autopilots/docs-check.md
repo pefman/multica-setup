@@ -46,9 +46,14 @@ fetch in your task workspace):
    - gaps found and the backlog issue keys created for them;
    - "docs up to date" stated explicitly when there are no gaps.
 
+6. **Close this issue** — `multica issue status <this issue> done
+   --no-start`. The report (and any filed gap issues) are the
+   deliverable; leaving run issues open only clutters the board.
+
 ## Boundaries
 - Read-only on repositories: no commits, no pushes, no branch work.
-- The only board writes are the backlog issues in step 4.
+- The only board writes are the backlog issues in step 4 and closing this
+  issue in step 6.
 - When a repository has no commits in the window, say so and move on.
 - If a repository is unreachable or tooling is broken, report it and
   continue with the remaining repositories; if everything is broken, post

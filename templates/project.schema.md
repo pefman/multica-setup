@@ -34,7 +34,7 @@ workspace, that is why.
 |---|---|---|
 | `name` | yes | Project title (e.g. `Sample Project MVP`). |
 | `description` | recommended | Goes into the execution context of **every** run on this project's issues. Put the goal, technical boundaries, and delivery conventions here — one paragraph each, not a wiki. |
-| `repos` | recommended | List of GitHub repo URLs, attached as project resources so runs know which code to use. |
+| `repos` | recommended | List of GitHub repo URLs (use **https** — your daemon can't use your SSH keys, and `git@…` URLs make agents re-register the repo mid-run), attached as project resources so runs know which code to use. |
 | `lead_role` | optional | Role whose agent is set as project lead (default: `lead`). The lead *marks* coordination; it does not change permissions or auto-assign. |
 
 ### `team` — the agents and how they work together
@@ -125,8 +125,12 @@ the apply, naming the variable).
 
 ## Conventions the manifest bakes in
 
-- **No auto-merge, no auto-done, no auto-deploy.** Every delivery parks in
-  `in_review` for the owner; `done`, merges, and deploys are human actions.
+- **No auto-merge, no auto-deploy.** Every delivery parks in `in_review`
+  for the owner; merges and deploys are human actions. `done` is the
+  exception to "no auto": the lead sets it on a delivery only after the
+  owner's approval on the thread and the linked PR is merged, and it
+  closes start-decision / kickoff / epic / autopilot-run issues that no
+  longer serve a purpose — so the board self-cleans without you.
 - **Handoffs are one comment** (Done / Evidence / Questions / Ask + exact
   `@mention`), enforced by the `handoff-protocol` skill and the squad
   instructions.

@@ -47,6 +47,22 @@ the board, and the owner can't tell what it is without opening it.
 - After the owner merges, your follow-up (if the issue asks) is to clean up
   (delete the branch via the merge, or note it) — then report on the issue.
 
+## Keep the board accurate
+
+The issue identifier in the PR title is what links a PR to its issue —
+but only when the workspace has a GitHub integration; many do not. So on
+every PR you open (including rework PRs on the same issue), also record it
+as issue metadata:
+
+```bash
+multica issue metadata set <issue-id> --key pr_url --value <full PR URL>
+multica issue metadata set <issue-id> --key branch --value <branch name>
+```
+
+Update both whenever a rework PR replaces the first one, so the issue
+always points at the live branch/PR. Full URLs only — never a bare PR
+number, never invented keys.
+
 ## When you have no PR to open
 
 Not every deliverable is code. If your work produced docs, a runbook, or a
