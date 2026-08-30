@@ -227,7 +227,7 @@ is theirs, the decisions are yours, and the board stays clean.
 | `templates/` | Manifest example + field reference |
 | `templates/mcp/` | Bundled MCP server presets (`context7`, `firecrawl`) — on by default in `init` (`--no-mcp` disables, `--mcp` overrides) |
 | `roles/` | Instruction templates per role (rendered into each agent) |
-| `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `pr-conventions`, `delivery-report` |
+| `skills/` | Shared skills: `handoff-protocol`, `kanban-contract`, `role-contract`, `pr-conventions`, `delivery-report` |
 | `squad/` | Squad instructions (routing, handoff discipline, sign-off policy) |
 | `autopilots/` | Runbooks: `daily-standup` (default), plus opt-in `stall-radar`, `weekly-hygiene`, `pr-patrol`, `docs-check` |
 | `docs/` | `how-it-works.md`, `flow.md`, `runbook.md` |

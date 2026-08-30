@@ -2431,6 +2431,7 @@ def cmd_init(args):
          "attach_to": "all"},
         {"name": "handoff-protocol", "source": "local", "attach_to": "all"},
         {"name": "kanban-contract", "source": "local", "attach_to": "all"},
+        {"name": "role-contract", "source": "local", "attach_to": "all"},
         {"name": "pr-conventions", "source": "local",
          "attach_to": ["lead", "engineer", "reviewer", "qa", "release", "docs"]},
         {"name": "delivery-report", "source": "local", "attach_to": "all"},

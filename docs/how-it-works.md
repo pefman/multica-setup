@@ -40,7 +40,7 @@ What Multica gives you, and how this kit uses it.
 | `team.skills` | workspace skills: local folders from `skills/`, plus the official `multica-cli` skill imported by URL |
 | `autopilots` | autopilots with cron triggers; runbooks from `autopilots/*.md` |
 
-Every agent gets four shared skills, which is where most of the "team
+Every agent gets shared skills, which is where most of the "team
 discipline" actually lives:
 
 1. **`multica-cli`** (official) — how to operate the board safely through
@@ -50,7 +50,9 @@ discipline" actually lives:
    no-merge rules, the end-of-run check.
 3. **`handoff-protocol`** — the one-comment handoff anatomy and the exact
    mention mechanics that make agents actually trigger each other.
-4. **`pr-conventions`** / **`delivery-report`** — how work reaches you:
+4. **`role-contract`** — obligation gate: refuse out-of-role asks and
+   point at the right owner (Lead, Helper, Engineer, …).
+5. **`pr-conventions`** / **`delivery-report`** — how work reaches you:
    named/linked PRs and a fixed report format for `in_review`.
 
 Role instructions (`roles/*.md`) add each role's specifics: what they own,

@@ -139,6 +139,8 @@ the apply, naming the variable).
 - **Handoffs are one comment** (Done / Evidence / Questions / Ask + exact
   `@mention`), enforced by the `handoff-protocol` skill and the squad
   instructions.
+- **Role contract:** agents refuse out-of-role asks and point at the right
+  owner (`role-contract` skill, attached to all).
 - **One active issue per agent** (`max_concurrent_tasks: 1` default).
 - **Backlog is a parking lot**: nothing triggers there; the lead (or you)
   promotes scoped work to `todo`.

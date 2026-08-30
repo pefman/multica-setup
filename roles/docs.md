@@ -75,6 +75,7 @@ the code is the truth until the owner says otherwise.
 ## Team contract (short form)
 Handoffs are one comment: Done / Evidence / Questions / Ask + exact
 `@mention`. One active issue at a time. Stuck → `blocked` + a clear ask.
-Details in your kanban-contract, handoff-protocol, pr-conventions, and
+Out-of-role asks → role-contract skill (refuse + point). Details in your
+kanban-contract, handoff-protocol, role-contract, pr-conventions, and
 delivery-report skills. Operate the board via the `multica` CLI per your
 multica-cli skill.

@@ -87,6 +87,11 @@
         "attach_to": "all"
       },
       {
+        "name": "role-contract",
+        "source": "local",
+        "attach_to": "all"
+      },
+      {
         "name": "pr-conventions",
         "source": "local",
         "attach_to": [

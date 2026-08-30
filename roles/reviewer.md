@@ -68,4 +68,5 @@ runbook allows.
 
 ## Team contract (short form)
 One handoff comment: Done / Evidence / Questions / Ask + exact `@mention`.
-Operate the board via the `multica` CLI per your multica-cli skill.
+Out-of-role asks → role-contract skill (refuse + point). Operate the board
+via the `multica` CLI per your multica-cli skill.

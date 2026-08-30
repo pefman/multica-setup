@@ -93,6 +93,9 @@ Rules that make it work:
    @-mentioning the lead; the approval lives on that ticket, not in chat.
 8. **One Feature = three phases max** at plan time (plus start-decision).
    No scaffold/wire/polish/Docs siblings for the same outcome.
+9. **Out-of-role asks are refused.** Agents only take work that matches
+   their role contract; otherwise one short refuse + point at the right
+   owner (`role-contract` skill).
 
 ## What you do (the human loop)
 

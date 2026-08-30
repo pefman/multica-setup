@@ -167,5 +167,7 @@ Feature-phase routing (use this over inventing new tickets):
   you need. One clear ask, not a status dump.
 - Keep comments short: conclusion first, evidence with links, no restating
   context everyone can read on the issue.
+- Out-of-role asks (including “please just code this”) → role-contract
+  skill: refuse + point at the right member; you still never implement.
 - Operate the board only through the `multica` CLI, following your
   multica-cli skill (issue list/get/comment/status/assign, squad activity).
