@@ -140,6 +140,21 @@ ROUTING_POLICY = {
     ),
 }
 
+PROJECT_SCOPING = (
+    "\n\n## Project scoping\n"
+    "Work in this workspace is organized into projects, and each project has "
+    "its own registered repositories. Every issue belongs to exactly one "
+    "project.\n"
+    "- Before touching a repository, check which project the issue belongs to, "
+    "and work **only** in that project's registered repositories.\n"
+    "- A repository registered under a different project is out of scope for "
+    "this issue, even if you can see it.\n"
+    "- If the issue has no project, or you are unsure which project — and "
+    "therefore which repositories — the work should land in: do **not** guess. "
+    "Ask the project owner on the issue (one clear question) and set it "
+    "`blocked` until you get an answer."
+)
+
 
 class MulticaError(Exception):
     pass
@@ -502,7 +517,7 @@ def unwrap_list(x):
 @dataclass
 class Manifest:
     workspace: dict
-    project: dict
+    projects: list
     team: dict
     autopilots: list
     mcp: dict
@@ -511,6 +526,19 @@ class Manifest:
     @property
     def roles(self):
         return self.team["roles"]
+
+    @property
+    def project(self):
+        return self.projects[0]
+
+    @property
+    def all_repos(self):
+        out = []
+        for p in self.projects:
+            for r in p.get("repos", []):
+                if r not in out:
+                    out.append(r)
+        return out
 
     @property
     def mcp_servers(self):
@@ -545,12 +573,6 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
     if ws["mode"] == "new" and not (ws.get("name") and ws.get("slug")):
         raise ManifestError("workspace.name and workspace.slug are required when mode is 'new'")
 
-    project = raw.get("project") or {}
-    if not project.get("name"):
-        raise ManifestError("project.name is required")
-    if not project.get("description"):
-        raise ManifestError("project.description is required (it enters every run's context)")
-
     team = raw.get("team") or {}
     if not team.get("squad_name"):
         raise ManifestError("team.squad_name is required")
@@ -579,6 +601,33 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
         if s["source"] == "url" and not s.get("url"):
             raise ManifestError(f"skill '{s['name']}' has source 'url' but no url")
 
+    if raw.get("projects") is not None:
+        if raw.get("project") is not None:
+            raise ManifestError("use either 'project' (single) or 'projects' (list) — not both")
+        projects_raw = raw.get("projects")
+        if not isinstance(projects_raw, list) or not projects_raw:
+            raise ManifestError("projects must be a non-empty list of project objects")
+    else:
+        projects_raw = [raw.get("project") or {}]
+    projects = []
+    seen_names = set()
+    for pr in projects_raw:
+        if not pr.get("name"):
+            raise ManifestError("project entry missing 'name'")
+        if not pr.get("description"):
+            raise ManifestError(f"project '{pr['name']}' missing 'description' (it enters every run's context)")
+        if pr.get("lead_role") and pr["lead_role"] not in seen:
+            raise ManifestError(f"project '{pr['name']}' lead_role '{pr['lead_role']}' is not a team role")
+        if pr["name"] in seen_names:
+            raise ManifestError(f"duplicate project name '{pr['name']}'")
+        seen_names.add(pr["name"])
+        projects.append({
+            "name": pr["name"],
+            "description": pr["description"],
+            "repos": list(pr.get("repos", [])),
+            "lead_role": pr.get("lead_role", "lead"),
+        })
+
     autopilots = []
     for a in raw.get("autopilots", []):
         for k in ("key", "name", "assignee_role"):
@@ -586,6 +635,8 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
                 raise ManifestError(f"autopilot entry missing '{k}': {a}")
         if a["assignee_role"] not in seen:
             raise ManifestError(f"autopilot '{a['name']}' assigns unknown role '{a['assignee_role']}'")
+        if a.get("project") and a["project"] not in seen_names:
+            raise ManifestError(f"autopilot '{a['name']}' lands in unknown project '{a['project']}'")
         if a.get("mode") not in (None, "create_issue", "run_only"):
             raise ManifestError(f"autopilot '{a['name']}' mode must be create_issue or run_only")
         runbook = AUTOPILOTS_DIR / f"{a['key']}.md"
@@ -598,6 +649,7 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
             "key": a["key"], "name": a["name"], "assignee_role": a["assignee_role"],
             "mode": mode, "cron": a.get("cron", "0 9 * * *"),
             "timezone": a.get("timezone", "UTC"), "issue_title": a.get("issue_title"),
+            "project": a.get("project"),
         })
 
     mcp = raw.get("mcp") or {}
@@ -608,7 +660,7 @@ def parse_manifest(raw: dict, path=None) -> Manifest:
     if attach != "all" and (not isinstance(attach, list) or any(r not in seen for r in attach)):
         raise ManifestError(f"mcp.attach_to must be 'all' or a list of known roles: {attach}")
 
-    return Manifest(workspace=ws, project=project, team=team,
+    return Manifest(workspace=ws, projects=projects, team=team,
                     autopilots=autopilots, mcp=mcp, path=path or Path("."))
 
 
@@ -663,13 +715,17 @@ def get_spec(args):
     mc = make_mc(args)
     ws_id = target_workspace_id(mc, args, None)
     mc_ws = Multica(workspace_id=ws_id, profile=args.profile)
+    want = getattr(args, "project", None)
     for p in mc_ws.project_list():
-        if getattr(args, "project", None) and p.get("title") != args.project:
+        if want and p.get("title") != want:
             continue
         _, spec = split_description(p.get("description") or "")
         if spec is None:
             continue
-        return parse_manifest(spec), spec, "cli"
+        man = parse_manifest(spec)
+        if want and not any(pr["name"] == want for pr in man.projects):
+            continue
+        return man, spec, "cli"
     where = (f"workspace '{args.workspace}'"
              + (f" / project '{args.project}'" if getattr(args, "project", None) else ""))
     raise ManifestError(f"no multica-setup-managed project in {where} "
@@ -740,20 +796,23 @@ ROUTE_BULLETS = [
 
 def build_context(manifest, agent_ids=None):
     """Base render context shared by all templates."""
-    p = manifest.project
-    repos = "\n".join(f"- {r}" for r in p.get("repos", [])) or "(no repositories registered)"
     names = {r["role"]: r["name"] for r in manifest.roles}
+    sections = []
+    for p in manifest.projects:
+        repos = "\n".join(f"- {r}" for r in p.get("repos", [])) or "(no repositories registered)"
+        sections.append(f"### {p['name']}\n{p['description']}\n\nRepositories:\n{repos}")
     table_rows = [f"| {what} | {names[role]} |" for role, what in ROUTE_TABLE if role in names]
     table_rows.append("| Anything ambiguous or cross-cutting | you route it |")
     bullet_rows = [f"- {what} → **{names[role]}** ({role})"
-                   for role, what in ROUTE_BULLETS if role in names]
+                    for role, what in ROUTE_BULLETS if role in names]
     bullet_rows.append(
         "- Cross-cutting, ambiguous, or multi-role work → you sequence it: "
         "delegate the first step, then route each member's output to the next.")
     ctx = {
-        "project_name": p["name"],
-        "project_description": p["description"],
-        "repo_list": repos,
+        "projects_names": ", ".join(p["name"] for p in manifest.projects),
+        "projects_section": "\n\n".join(sections),
+        "repo_list": ("\n".join(f"- {r}" for r in manifest.all_repos)
+                      or "(no repositories registered)"),
         "squad_name": manifest.team["squad_name"],
         "issue_prefix": manifest.workspace.get("issue_prefix", "MP").upper(),
         "roster": "\n".join(
@@ -774,6 +833,7 @@ def render_agent_instructions(manifest, role_spec, base_ctx):
     ctx["name"] = role_spec["name"]
     if manifest.team.get("routing", "hybrid") == "leader-only" and role_spec["role"] == "lead":
         tpl += "\n\n" + ROUTING_POLICY["leader-only"]
+    tpl += PROJECT_SCOPING
     attached = manifest.mcp_attached(role_spec["role"])
     if attached:
         lines = [f"- {MCP_BLURBS.get(n, f'{n} — MCP server; see its tool list for what it provides')}"
@@ -787,6 +847,7 @@ def render_agent_instructions(manifest, role_spec, base_ctx):
 def render_squad_instructions(manifest, base_ctx):
     tpl = (REPO_ROOT / "squad" / "squad-instructions.md").read_text()
     tpl += "\n\n" + ROUTING_POLICY[manifest.team.get("routing", "hybrid")]
+    tpl += PROJECT_SCOPING
     return render(tpl, base_ctx)
 
 
@@ -957,7 +1018,7 @@ class Plan:
 
 
 def step_workspace_registry(mc, manifest, plan):
-    repos = manifest.project.get("repos", [])
+    repos = manifest.all_repos
     if not repos:
         return
     have = {r.get("url") for r in mc.repo_list()}
@@ -1240,7 +1301,7 @@ def step_squad(mc, manifest, agent_ids, plan):
                 f"leader {lead_name} + {', '.join(m[2] for m in members)}")
         created = mc.squad_create(
             name, lead_name,
-            description=f"Squad for {manifest.project['name']} — {manifest.team.get('routing', 'hybrid')} routing.")
+            description=f"Squad for {', '.join(p['name'] for p in manifest.projects)} — {manifest.team.get('routing', 'hybrid')} routing.")
         sid = extract_id(created)
         for mid, role_line, _ in members:
             mc.squad_member_add(sid, mid, role_line)
@@ -1248,58 +1309,66 @@ def step_squad(mc, manifest, agent_ids, plan):
     return sid
 
 
-def step_project(mc, manifest, agent_ids, plan, spec=None):
-    p = manifest.project
-    title = p["name"]
-    repos = p.get("repos", [])
-    lead_name = agent_names_for_role(manifest, p.get("lead_role", "lead"))
-    lead_id = agent_ids.get(lead_name) if lead_name else None
-    existing = {x.get("title"): x for x in mc.project_list()}
-    if title in existing:
-        proj = existing[title]
-        pid = proj["id"]
-        changes = []
-        if spec is None:
-            if (proj.get("description") or "") != p["description"]:
+def step_projects(mc, manifest, agent_ids, plan, spec=None):
+    """Create/update every project; the spec (in --in-project mode) rides in
+    the first project's description."""
+    first = True
+    ids = {}
+    for p in manifest.projects:
+        title = p["name"]
+        repos = p.get("repos", [])
+        lead_name = agent_names_for_role(manifest, p.get("lead_role", "lead"))
+        lead_id = agent_ids.get(lead_name) if lead_name else None
+        existing = {x.get("title"): x for x in mc.project_list()}
+        if title in existing:
+            proj = existing[title]
+            pid = proj["id"]
+            changes = []
+            if first and spec is not None:
+                stored_human, stored_spec = split_description(proj.get("description") or "")
+                if stored_human != (p["description"] or "").strip():
+                    changes.append("description")
+                elif stored_spec != spec:
+                    changes.append("spec (embedded in description)")
+            elif (proj.get("description") or "") != p["description"]:
                 changes.append("description")
-        else:
-            stored_human, stored_spec = split_description(proj.get("description") or "")
-            if stored_human != (p["description"] or "").strip():
-                changes.append("description")
-            elif stored_spec != spec:
-                changes.append("spec (embedded in description)")
-        if lead_id and proj.get("lead_id") and proj["lead_id"] != lead_id:
-            changes.append("lead")
-        if changes:
-            if plan.dry:
-                plan.log("update", f"project {title}", ", ".join(changes))
+            if lead_id and proj.get("lead_id") and proj["lead_id"] != lead_id:
+                changes.append("lead")
+            if changes:
+                if plan.dry:
+                    plan.log("update", f"project {title}", ", ".join(changes))
+                else:
+                    plan.log("update", f"project {title}", ", ".join(changes))
+                    upd = {}
+                    if any(c.startswith("description") or c.startswith("spec") for c in changes):
+                        upd["description"] = (store_description(p["description"], spec)
+                                              if (first and spec is not None) else p["description"])
+                    if "lead" in changes and lead_name:
+                        upd["lead"] = lead_name
+                    mc.project_update(pid, **upd)
             else:
-                plan.log("update", f"project {title}", ", ".join(changes))
-                upd = {}
-                if any(c.startswith("description") or c.startswith("spec") for c in changes):
-                    upd["description"] = (store_description(p["description"], spec)
-                                          if spec is not None else p["description"])
-                if "lead" in changes and lead_name:
-                    upd["lead"] = lead_name
-                mc.project_update(pid, **upd)
+                plan.ok(f"project {title}")
+            _sync_project_repos(mc, pid, repos, plan)
+            ids[title] = pid
+            first = False
+            continue
+        detail = f"{len(repos)} repo(s)" + (f", lead {lead_name}" if lead_name else "")
+        if plan.dry:
+            plan.log("create", f"project {title}", detail)
         else:
-            plan.ok(f"project {title}")
-        _sync_project_repos(mc, pid, repos, plan)
-        return pid
-    detail = f"{len(repos)} repo(s)" + (f", lead {lead_name}" if lead_name else "")
-    if plan.dry:
-        plan.log("create", f"project {title}", detail)
-    else:
-        plan.log("create", f"project {title}", detail)
-        desc = store_description(p["description"], spec) if spec is not None else p["description"]
-        created = mc.project_create(title, desc, lead=lead_name, repos=repos)
-        pid = extract_id(created)
-        if not pid:
-            for x in mc.project_list():
-                if x.get("title") == title:
-                    pid = x["id"]
-                    break
-        return pid
+            plan.log("create", f"project {title}", detail)
+            desc = (store_description(p["description"], spec)
+                    if (first and spec is not None) else p["description"])
+            created = mc.project_create(title, desc, lead=lead_name, repos=repos)
+            pid = extract_id(created)
+            if not pid:
+                for x in mc.project_list():
+                    if x.get("title") == title:
+                        pid = x["id"]
+                        break
+            ids[title] = pid
+        first = False
+    return ids
 
 
 def agent_names_for_role(manifest, role):
@@ -1330,13 +1399,14 @@ def _sync_project_repos(mc, pid, repos, plan):
                 mc.project_resource_add(pid, u)
 
 
-def step_autopilots(mc, manifest, agent_ids, project_id, plan):
+def step_autopilots(mc, manifest, agent_ids, project_ids, plan):
     ctx = build_context(manifest)
     existing = {(a.get("name") or a.get("title")): a for a in mc.autopilot_list()}
     names = manifest.agent_names_by_role()
     for ap in manifest.autopilots:
         assignee = names.get(ap["assignee_role"], "")
         runbook = render_runbook(manifest, ap["key"], ctx)
+        project_id = project_ids.get(ap.get("project") or manifest.projects[0]["name"])
         if ap["name"] in existing:
             a = existing[ap["name"]]
             aid = a["id"]
@@ -1535,7 +1605,7 @@ def cmd_check(args):
             report("fail", "templates", str(e))
 
         # gh (only relevant with repos)
-        if manifest.project.get("repos"):
+        if manifest.all_repos:
             if shutil.which("gh"):
                 report("ok", "GitHub CLI", "available for PR-based verification")
             else:
@@ -1543,7 +1613,7 @@ def cmd_check(args):
 
             # repo reachability — this machine is only a proxy for the runtime
             # machines, so failures are warnings, not failures
-            for url in manifest.project["repos"]:
+            for url in manifest.all_repos:
                 label = url.split("://")[-1].rstrip("/")
                 try:
                     r = subprocess.run(["git", "ls-remote", "--heads", url],
@@ -1561,7 +1631,7 @@ def cmd_check(args):
         # git autopilots tip — optional; standup-only is the default
         ap_keys = {a["key"] for a in manifest.autopilots}
         missing_git = [d["key"] for d in GIT_AP_DEFS
-                       if manifest.project.get("repos") and d["key"] not in ap_keys]
+                       if manifest.all_repos and d["key"] not in ap_keys]
         if missing_git:
             report("ok", "autopilots",
                    f"repos registered; optional git runbooks not enabled ({', '.join(missing_git)}) — add to manifest to opt in")
@@ -1591,7 +1661,8 @@ def cmd_check(args):
 def run_apply(mc, args, manifest, spec=None, dry=False):
     plan = Plan(dry)
     print(f"== multica-setup: {'plan' if dry else 'apply'} for "
-          f"{'workspace ' + (manifest.workspace.get('slug') or '?')} — {manifest.project['name']} ==")
+          f"{'workspace ' + (manifest.workspace.get('slug') or '?')} — "
+          f"{', '.join(p['name'] for p in manifest.projects)} ==")
     ws_id = None
     if manifest.workspace["mode"] == "existing" or not dry:
         try:
@@ -1610,8 +1681,8 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
             n_skills = len(manifest.team.get("skills", []))
             cverb = _color("create", "32")
             print(f"workspace: {cverb} {manifest.workspace['slug']} ({manifest.workspace.get('name')})")
-            print(f"project:   {cverb} {manifest.project['name']} "
-                  f"({len(manifest.project.get('repos', []))} repo(s))")
+            for p in manifest.projects:
+                print(f"project:   {cverb} {p['name']} ({len(p.get('repos', []))} repo(s))")
             for r in manifest.roles:
                 print(f"agent:     {cverb} {r['name']} ({ROLES[r['role']]} on {r['runtime']})")
             print(f"skills:    {_color('create/import', '32')} {', '.join(s['name'] for s in manifest.team.get('skills', []))}")
@@ -1637,8 +1708,8 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
     step_mcp(mc, manifest, agent_ids, plan,
              prev_state.get("created", {}).get("mcp_servers", []))
     step_squad(mc, manifest, agent_ids, plan)
-    project_id = step_project(mc, manifest, agent_ids, plan, spec)
-    step_autopilots(mc, manifest, agent_ids, project_id, plan)
+    project_ids = step_projects(mc, manifest, agent_ids, plan, spec)
+    step_autopilots(mc, manifest, agent_ids, project_ids, plan)
 
     if not dry:
         if spec is None:
@@ -1646,7 +1717,7 @@ def run_apply(mc, args, manifest, spec=None, dry=False):
             state.update({
                 "workspace_slug": manifest.workspace.get("slug"),
                 "workspace_id": ws_id if ws_id and not str(ws_id).startswith("dry") else None,
-                "project_id": project_id,
+                "project_ids": project_ids,
                 "created": {
                     "agents": {n: i for n, i in agent_ids.items()},
                     "squad_name": manifest.team["squad_name"],
@@ -1712,7 +1783,7 @@ def cmd_status(args):
     for r in mc.runtime_list():
         print(f"runtime: {r.get('name') or r.get('id'):<28} {r.get('provider'):<10} {r.get('status')}")
 
-    agents = mc.agent_list()
+    agents = [a for a in mc.agent_list() if not a.get("system_key")]
     if agents:
         print(f"agents ({len(agents)}):")
         for a in agents:
@@ -1908,26 +1979,35 @@ def cmd_kickoff(args):
             project_id = p["id"]
             break
     print(f"== multica-setup: kickoff via squad '{squad}' (lead: {lead}) ==")
-    created = mc.issue_create(
-        "Kickoff: what should we start working on?",
-        description=issue_desc, status="todo", assignee=squad, project_id=project_id)
-    issue = None
-    if isinstance(created, dict):
-        issue = created.get("key") or created.get("identifier") or created.get("title")
+    if len(manifest.projects) > 1:
+        projs = {p["name"]: next((x["id"] for x in mc.project_list()
+                                   if x.get("title") == p["name"]), None)
+                 for p in manifest.projects}
+    created_all = []
+    for p in manifest.projects:
+        pid = project_id if len(manifest.projects) == 1 else projs.get(p["name"])
+        created = mc.issue_create(
+            "Kickoff: what should we start working on?",
+            description=issue_desc, status="todo", assignee=squad, project_id=pid)
+        issue = None
+        if isinstance(created, dict):
+            issue = created.get("key") or created.get("identifier") or created.get("title")
+            if not issue:
+                for v in created.values():
+                    if isinstance(v, str) and re.match(r"^[A-Z]+-\d+$", v):
+                        issue = v
+                        break
         if not issue:
-            for v in created.values():
-                if isinstance(v, str) and re.match(r"^[A-Z]+-\d+$", v):
-                    issue = v
-                    break
-    if not issue:
-        print(f"FAIL: could not determine issue key from: {created!r}")
-        return 1
-    try:
-        mc.issue_subscribe(issue)
-    except MulticaError as e:
-        print(f"note: could not subscribe the owner explicitly: {e}")
-    print(f"issue: {issue} (assigned to {squad}, status todo)")
-    print(f"the lead ({lead}) will comment on {issue} shortly and ping you in your inbox.")
+            print(f"FAIL: could not determine issue key from: {created!r}")
+            return 1
+        created_all.append(issue)
+        try:
+            mc.issue_subscribe(issue)
+        except MulticaError as e:
+            print(f"note: could not subscribe the owner explicitly: {e}")
+    for issue in created_all:
+        print(f"issue: {issue} (assigned to {squad}, status todo)")
+    print(f"the lead ({lead}) will comment on {created_all[0]} shortly and ping you in your inbox.")
     return 0
 
 
@@ -1974,18 +2054,22 @@ def cmd_teardown(args):
             if s.get("name") == sname:
                 mc.skill_delete(s["id"])
                 print(f"deleted skill: {sname}")
-    pid = state.get("project_id")
-    if not pid:
-        for x in mc.project_list():
-            if x.get("title") == manifest.project["name"]:
-                pid = x["id"]
-                break
-    if pid:
-        try:
-            mc.project_delete(pid)
-            print("deleted project")
-        except MulticaError as e:
-            print(f"project: {e}")
+    project_ids = state.get("project_ids") or {}
+    if not project_ids and state.get("project_id"):
+        project_ids = {manifest.project["name"]: state["project_id"]}
+    for p in manifest.projects:
+        pid = project_ids.get(p["name"])
+        if not pid:
+            for x in mc.project_list():
+                if x.get("title") == p["name"]:
+                    pid = x["id"]
+                    break
+        if pid:
+            try:
+                mc.project_delete(pid)
+                print(f"deleted project: {p['name']}")
+            except MulticaError as e:
+                print(f"project {p['name']}: {e}")
     if ws_id and not str(ws_id).startswith("dry"):
         print(f"note: workspace deletion is not possible via CLI — remove "
               f"'{ws_slug}' from the multica.ai web UI if it was newly created.")
@@ -2640,7 +2724,8 @@ def run_project_actions(source, profile=None):
                 print(f"  spec no longer loadable: {e}")
                 return
             ws = man.workspace.get("slug") or man.workspace.get("name") or "?"
-            header = f"{Path(source['manifest']).name} — workspace {ws}, project {man.project.get('name', '?')}"
+            header = (f"{Path(source['manifest']).name} — workspace {ws}, "
+                      f"project {', '.join(pr.get('name', '?') for pr in man.projects)}")
         else:
             header = (f"workspace {source['workspace']} / project {source.get('project')} "
                       f"(spec in project description)")

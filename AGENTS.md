@@ -39,10 +39,15 @@ pushed into Multica by `apply`.
 
 - Flow: manifest → `Manifest` dataclass → `build_context()` → `render()` →
   `Multica` client → `Plan` steps in this order: workspace → skills → agents
-  → squad → project → autopilots.
+  → squad → projects → autopilots. A manifest may hold **several projects**
+  per workspace (`projects` list; the singular `project` is shorthand for one)
+  — one shared team/squad serves all of them, each project carries its own
+  repos and `lead_role`, and agents/squad prompts list every project with a
+  hard rule to work only in the issue's project's repos (ask when unsure).
 - `render()` substitutes `{{key}}` strictly: a key missing from context, or
-  left unrendered, raises `ManifestError`. Context keys are exactly: `project_name`, `project_description`, `repo_list`,
-  `squad_name`, `issue_prefix`, `roster`, `routing_table`, `routing_bullets`,
+  left unrendered, raises `ManifestError`. Context keys are exactly: `projects_names`, `projects_section`, `repo_list`
+  (union over all projects), `squad_name`, `issue_prefix`,
+  `roster`, `routing_table`, `routing_bullets`,
   plus `<role>_name` per manifest role. Adding a `{{placeholder}}` to any
   template requires adding the key in `build_context()`.
 - The spec lives in a local `<workspace>.json`, or (with `--in-project`) in
@@ -55,7 +60,13 @@ pushed into Multica by `apply`.
 - Autopilot defaults: `default_ap` is standup-only. Optional runbooks live
   in `OPTIONAL_AP_DEFS` + `GIT_AP_DEFS` (catalog / opt-in). Git ones need
   `git` (and `gh`) on the runtime when enabled; `docs-check` is assigned
-  to the Docs role when the team has one, otherwise to the lead.
+  to the Docs role when the team has one, otherwise to the lead. An
+  autopilot may pin its issues to one project via `project` (name; default:
+  the first project).
+- Every workspace has Multica's built-in `mika` agent (system_key `mika`):
+  the server refuses to archive/disable it ("built into Multica"), so the
+  tool never manages it and `status` hides `system_key` agents from the
+  agent list.
 - `init` enables the bundled MCP presets (`context7`, `firecrawl`) by
   default; `--no-mcp` disables, `--mcp a,b` overrides. Custom
   mcpServers-format entries in the manifest work without code changes.

@@ -1,4 +1,4 @@
-Daily standup for **{{project_name}}** (workspace board review). You are
+Daily standup for **{{projects_names}}** (workspace board review). You are
 reporting to the project owner. This run is **read-mostly**: you never
 change another issue's status, never reassign, never post to other issues.
 Your output is the report comment on this issue.

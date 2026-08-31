@@ -134,14 +134,21 @@ state; `apply` creates/updates whatever differs and is idempotent — safe
 to re-run any time.
 
 Apply works in this order: workspace → shared skills → agents → squad →
-project → autopilots, then `kickoff` opens the first issue — the Lead
+projects → autopilots, then `kickoff` opens the first issue(s) — the Lead
 pings you and asks for your first idea pitch. `smoke` proves the whole
 flow with a throwaway issue.
 
 ## Good to know
 
-- **One team per workspace.** Agents and squads are workspace-scoped, so
-  two managed projects in the same workspace would collide on names.
+- **One team can run several projects.** Agents and squads are
+  workspace-scoped and shared; a manifest may list several `projects`
+  (the singular `project` is shorthand for one), each with its own repos
+  and lead. Every prompt lists all projects and hard-rules the agents to
+  work only in the repos of the project an issue belongs to — when unsure
+  where work lands, they ask instead of guessing.
+- **Every workspace ships a built-in `Mika` agent.** She is the
+  workspace's default chief-of-staff; the server refuses to archive or
+  disable her, so the tool ignores her (she does not appear in `status`).
 - **Slugs are global on Multica Cloud** (all users share the namespace).
   "workspace slug already exists" means someone else took it — pick a
   longer slug, or `init --workspace <slug>` to adopt an existing one.

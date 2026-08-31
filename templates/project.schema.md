@@ -1,10 +1,11 @@
 # Project manifest reference
 
-A manifest is a JSON file describing one Multica project: where it lives
-(workspace), what it is (project + repos), who works on it (team), and what
-runs on its own (autopilots). `bin/multica-setup` reads a manifest and
-creates or updates everything it describes — idempotently, so you can
-re-run `apply` after editing templates or the manifest.
+A manifest is a JSON file describing a Multica project team: where it
+lives (workspace), what it works on (one or more projects + repos), who
+works on it (team), and what runs on its own (autopilots).
+`bin/multica-setup` reads a manifest and creates or updates everything it
+describes — idempotently, so you can re-run `apply` after editing
+templates or the manifest.
 
 See `templates/project.example.json` for a complete, runnable example.
 
@@ -28,14 +29,27 @@ need a moment (or a `multica daemon restart` / re-login) to register
 runtimes for it — if `check` reports no online runtime in the new
 workspace, that is why.
 
-### `project` — the work container
+### `project` / `projects` — the work container(s)
+
+Use **either** the singular `project` (one project) **or** `projects`
+(a non-empty list — never both). Several projects share one team and
+squad; each project keeps its own repos and lead.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `name` | yes | Project title (e.g. `Sample Project MVP`). |
+| `name` | yes | Project title (e.g. `Sample Project MVP`). Unique within the manifest. |
 | `description` | recommended | Goes into the execution context of **every** run on this project's issues. Put the goal, technical boundaries, and delivery conventions here — one paragraph each, not a wiki. |
 | `repos` | recommended | List of GitHub repo URLs (use **https** — your daemon can't use your SSH keys, and `git@…` URLs make agents re-register the repo mid-run), attached as project resources so runs know which code to use. |
 | `lead_role` | optional | Role whose agent is set as project lead (default: `lead`). The lead *marks* coordination; it does not change permissions or auto-assign. |
+
+All agent and squad prompts list **every** project (name, description,
+repos) and carry a hard rule: work only in the repositories of the
+project an issue belongs to, and ask the owner on the issue when the
+project — and therefore the repos — is unclear.
+
+With `--in-project`, the spec is stored in the **first** project's
+description; `--workspace <slug> --project <name>` matches any of the
+spec's project names. `kickoff` opens one kickoff issue per project.
 
 ### `team` — the agents and how they work together
 
@@ -84,6 +98,7 @@ update them later with `multica skill refresh <id>`.
 | `cron` | yes | 5-field cron expression, e.g. `30 8 * * 1-5`. |
 | `timezone` | yes | IANA timezone, e.g. `Europe/Stockholm`. |
 | `issue_title` | if `create_issue` | Title template for created issues; only `{{date}}` (UTC, `YYYY-MM-DD`) is interpolated. |
+| `project` | optional | Name of the project created issues are filed in (default: the manifest's first project). Runbooks themselves are workspace-wide (`repo_list` spans all projects). |
 
 Available in this repo: `daily-standup` (weekday morning board report by
 the lead), `stall-radar` (weekday midday: nudges quiet in-flight issues on

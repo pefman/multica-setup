@@ -53,20 +53,24 @@ bin/multica-setup init --new-workspace "My Other Project" \
 
 Agents/skills/squads are per-workspace, so a new workspace gets a fresh copy
 of the team. To reuse a hand-tuned manifest instead, copy it, point it at
-the new workspace, adjust `project` + `repos`, run `check` → `plan` →
-`apply`.
+the new workspace, adjust `projects` (or `project`) + `repos`, run
+`check` → `plan` → `apply`. One workspace can hold several projects: list
+them under `projects` in the manifest — the shared team serves all of
+them, each project keeps its own repos and `lead_role`, and the agents
+work only in the repos of the project an issue belongs to (they ask
+when unsure).
 
 ## The kickoff issue (first contact)
 
 Right after `apply`, `init` opens **`Kickoff: what should we start working
-on?`** — status `todo`, assigned to the squad, owner subscribed — and the
-lead posts one comment: it asks what you want to build (a few sentences
-is enough, no spec) and explains in three lines how a pitch becomes
-shipped work (it plans one Feature with Research → Implement → Verify
-phases and opens a start-decision ticket; nothing builds until you say go
-on that ticket). Reply on the issue and the lead treats your pitch as new
-scope; once the feature is planned and linked, the lead closes the kickoff
-issue itself.
+on?`** (one issue per project) — status `todo`, assigned to the squad, owner
+subscribed — and the lead posts one comment: it asks what you want to build
+(a few sentences is enough, no spec) and explains in three lines how a pitch
+becomes shipped work (it plans one Feature with Research → Implement →
+Verify phases and opens a start-decision ticket; nothing builds until you
+say go on that ticket). Reply on the issue and the lead treats your pitch
+as new scope; once the feature is planned and linked, the lead closes the
+kickoff issue itself.
 
 - Skip it: `init --no-kickoff`.
 - Open one manually later: `bin/multica-setup --manifest my-project.json

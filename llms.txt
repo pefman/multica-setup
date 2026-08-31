@@ -30,14 +30,21 @@ directly.
 manifest (JSON spec) → `Manifest` dataclass → `build_context()` →
 `render()` → `Multica` client (subprocess calls to `multica ...
 --workspace-id ... --output json`) → `Plan` (dry = plan, else apply) →
-steps in order: workspace → skills → agents → squad → project →
+steps in order: workspace → skills → agents → squad → projects →
 autopilots.
 
 - `render()` substitutes `{{placeholder}}` strictly: a placeholder missing
   from the context, or one left unrendered, raises `ManifestError`. The
-  context keys are exactly: `project_name`, `project_description`,
-  `repo_list`, `squad_name`, `issue_prefix`, `roster`, `routing_table`,
+  context keys are exactly: `projects_names`, `projects_section`
+  (per-project name/description/repos block), `repo_list` (union over all
+  projects), `squad_name`, `issue_prefix`, `roster`, `routing_table`,
   `routing_bullets`, and `<role>_name` for every role.
+- A manifest may define several projects per workspace (`projects` list;
+  singular `project` is shorthand for one). One team/squad serves all of
+  them; every prompt lists all projects and appends a `## Project scoping`
+  rule (work only in the issue's project's repos; ask when unsure).
+  `--in-project` stores the spec in the FIRST project's description;
+  `--project` matches any of the spec's project names.
 - The spec lives in a local `<workspace>.json` file or inside Multica
   (in `--in-project` mode it is stored in the managed project's
   description as an HTML comment block and read back via
@@ -125,6 +132,12 @@ after CLI upgrades):
   re-apply restores via `agent restore <id>` — never re-create archived
   names
 - workspace slugs on Multica Cloud are globally unique across all users
+- the built-in `mika` agent (system_key `mika`, the workspace's default
+  chief-of-staff agent, present in every workspace) CANNOT be removed:
+  `agent archive <id>` → "built into Multica and cannot be archived",
+  `agent update --status …` → 500 `agent_status_check` violation. Never
+  code a mika-removal step; the tool ignores `system_key` agents
+  (`status` hides them, plan/apply never touch them)
 
 ## Verification before committing
 

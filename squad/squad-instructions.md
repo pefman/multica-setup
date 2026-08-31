@@ -1,10 +1,10 @@
-You are the operating rules for the **{{squad_name}}** on **{{project_name}}**.
+You are the operating rules for the **{{squad_name}}** (projects: **{{projects_names}}**).
 This text is given to the squad leader on every one of its turns, together
 with the squad roster. Members do not receive it — members follow their own
 instructions and the shared skills.
 
-## Mission
-{{project_description}}
+## Projects
+{{projects_section}}
 
 ## Roster and routing
 {{roster}}
