@@ -113,7 +113,11 @@ and `--mcp X,Y` picks a different set. Two transport shapes:
   context7). `init` can install node on the machine it runs on (or print
   the command), and `check` warns when a prerequisite is missing here.
 - **hosted** (e.g. `firecrawl`) — plain HTTP, no local prerequisites;
-  the keyless tier is rate-limited, a key raises it.
+  the keyless tier is rate-limited, a key raises it. Interactive `init`
+  asks for a Firecrawl API key (default **N** = install keyless); **Y**
+  stores `${FIRECRAWL_API_KEY}` in the manifest headers and uses the value
+  for the chained `apply`. `--auto` picks up an already-exported
+  `FIRECRAWL_API_KEY`, otherwise installs keyless.
 
 Operational notes:
 

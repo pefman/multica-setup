@@ -205,7 +205,10 @@ is theirs, the decisions are yours, and the board stays clean.
   `firecrawl`) by default — `--no-mcp` turns them off, `--mcp X,Y` picks
   a different set. Presets live in `templates/mcp/`; any
   `mcpServers`-format entry works as a custom server. Keys are referenced
-  as `${ENV_VAR}` — never in the file.
+  as `${ENV_VAR}` — never in the file. Interactive `init` asks for a
+  Firecrawl API key (default **N** = keyless); **Y** or `--auto` with
+  `FIRECRAWL_API_KEY` set wires `Bearer ${FIRECRAWL_API_KEY}` into the
+  firecrawl entry.
 
 ## Requirements
 

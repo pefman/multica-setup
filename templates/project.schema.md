@@ -130,9 +130,12 @@ can change the selection):
 - `context7` — up-to-date, version-specific library docs (stdio,
   `npx @upstash/context7-mcp`, no key; the runtime machine needs node)
 - `firecrawl` — web search + scraping (hosted
-  `https://mcp.firecrawl.dev/mcp`; the keyless tier has usage limits —
-  raise them with a custom entry carrying
-  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}`)
+  `https://mcp.firecrawl.dev/mcp`; the keyless tier has usage limits).
+  Interactive `init` asks for a Firecrawl API key (default **N** =
+  keyless); **Y** writes
+  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` and keeps
+  the value in the process env for the chained `apply`. `--auto` does the
+  same when `FIRECRAWL_API_KEY` is already set; otherwise installs keyless.
 
 Any other server (GitHub, Playwright, Sentry, …) works as a custom entry
 in the same `servers` map. String values may reference environment

@@ -119,6 +119,10 @@ Add an **MCP preset**: `templates/mcp/<name>.json` (mcpServers-format:
 a line in `templates/project.schema.md`. Custom (non-preset) servers need
 no code change — they are plain manifest entries; `${ENV_VAR}` references
 in server configs expand at apply time, never store raw tokens.
+Interactive `init` prompts for a Firecrawl API key when that preset is
+on (default **N** = keyless); **Y** / `--auto` + `FIRECRAWL_API_KEY` add
+`"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` to the
+written firecrawl entry.
 
 Calibrated CLI quirks the code depends on (multica 0.4.x — re-verify
 after CLI upgrades):
