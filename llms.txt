@@ -122,7 +122,9 @@ in server configs expand at apply time, never store raw tokens.
 Interactive `init` prompts for a Firecrawl API key when that preset is
 on (default **N** = keyless); **Y** / `--auto` + `FIRECRAWL_API_KEY` add
 `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` to the
-written firecrawl entry.
+written firecrawl entry and persist the value in `.multica-setup.env`
+(gitignored). `main()` loads `.multica-setup.env` then `.env` from cwd
+and `REPO_ROOT` into `os.environ` (no override) before any subcommand.
 
 Calibrated CLI quirks the code depends on (multica 0.4.x — re-verify
 after CLI upgrades):

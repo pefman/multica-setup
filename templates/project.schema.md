@@ -133,9 +133,10 @@ can change the selection):
   `https://mcp.firecrawl.dev/mcp`; the keyless tier has usage limits).
   Interactive `init` asks for a Firecrawl API key (default **N** =
   keyless); **Y** writes
-  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` and keeps
-  the value in the process env for the chained `apply`. `--auto` does the
-  same when `FIRECRAWL_API_KEY` is already set; otherwise installs keyless.
+  `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` and saves
+  the value to `.multica-setup.env` (gitignored; auto-loaded on later
+  runs). `--auto` does the same when `FIRECRAWL_API_KEY` is already set
+  (env or local file); otherwise installs keyless.
 
 Any other server (GitHub, Playwright, Sentry, …) works as a custom entry
 in the same `servers` map. String values may reference environment

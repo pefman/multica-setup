@@ -127,9 +127,11 @@ Operational notes:
   and use `multica workspace mcp update <name>`, or remove + re-add.
 - **Keys are references, not values**: write
   `"headers": {"Authorization": "Bearer ${FIRECRAWL_API_KEY}"}` and the
-  value is expanded from the environment at `apply` time. An unset
-  variable fails the apply and names the variable. Never put a raw token
-  in the manifest (it would land in git).
+  value is expanded at `apply` time from the process environment, or from
+  a local `.multica-setup.env` / `.env` file (gitignored; loaded
+  automatically). Interactive `init` writes Firecrawl keys there for you.
+  An unset variable fails the apply and names the variable. Never put a
+  raw token in the manifest (it would land in git).
 - **Removal**: dropping a server from the manifest unassigns it from the
   agents on the next `apply`; the library entry is kept (it may be shared)
   — remove it explicitly with `multica workspace mcp remove <name>`.

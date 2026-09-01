@@ -69,9 +69,11 @@ pushed into Multica by `apply`.
   agent list.
 - `init` enables the bundled MCP presets (`context7`, `firecrawl`) by
   default; `--no-mcp` disables, `--mcp a,b` overrides. Interactive init
-  asks for a Firecrawl API key (N = keyless); `--auto` uses
-  `FIRECRAWL_API_KEY` from the environment when set. Custom
-  mcpServers-format entries in the manifest work without code changes.
+  asks for a Firecrawl API key (N = keyless) and saves it to
+  `.multica-setup.env` (gitignored; auto-loaded by `main`); `--auto`
+  uses `FIRECRAWL_API_KEY` from the environment or that file when set.
+  Custom mcpServers-format entries in the manifest work without code
+  changes.
 
 ## Docs to keep in sync with any behavior change
 

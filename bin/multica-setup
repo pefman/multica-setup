@@ -881,6 +881,81 @@ def resolve_runtime(spec_runtime, runtimes):
 
 
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+LOCAL_ENV_NAME = ".multica-setup.env"
+
+
+def load_local_env(paths=None):
+    """Load KEY=VALUE pairs from local env files into os.environ (no override).
+
+    Checks .multica-setup.env then .env under cwd and REPO_ROOT. Existing
+    environment values win. Returns the paths that contributed at least one var.
+    """
+    if paths is None:
+        seen = []
+        paths = []
+        for base in (Path("."), REPO_ROOT):
+            for name in (LOCAL_ENV_NAME, ".env"):
+                p = (base / name).resolve()
+                if p not in seen:
+                    seen.append(p)
+                    paths.append(p)
+    loaded = []
+    for path in paths:
+        path = Path(path)
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        n = 0
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip().strip("'").strip('"')
+            if not k or k in os.environ:
+                continue
+            os.environ[k] = v
+            n += 1
+        if n:
+            loaded.append(str(path))
+    return loaded
+
+
+def save_local_env_var(name, value, path=None):
+    """Write or replace NAME=value in .multica-setup.env (gitignored)."""
+    path = Path(path) if path else Path(LOCAL_ENV_NAME)
+    lines = []
+    if path.exists():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines(True)
+        except OSError:
+            lines = []
+    out = []
+    found = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(line if line.endswith("\n") else line + "\n")
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key == name:
+            out.append("%s=%s\n" % (name, value))
+            found = True
+        else:
+            out.append(line if line.endswith("\n") else line + "\n")
+    if not found:
+        out.append("%s=%s\n" % (name, value))
+    path.write_text("".join(out), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    os.environ[name] = value
+    return path
 
 
 def expand_env_refs(cfg, where):
@@ -1640,7 +1715,8 @@ def cmd_check(args):
         for name, cfg in manifest.mcp_servers.items():
             for var in sorted({v for v in ENV_REF.findall(json.dumps(cfg)) if not os.environ.get(v)}):
                 report("warn", f"mcp {name}",
-                       f"references ${{'{var}'}} which is not set in THIS environment — the server will start unconfigured until you export it")
+                       f"references ${{'{var}'}} which is not set — put it in {LOCAL_ENV_NAME} "
+                       "(or the environment) before apply")
             if "url" in cfg:
                 report("ok", f"mcp {name}", "hosted server — no local prerequisites")
             for exe in MCP_PREREQS.get(name, (cfg.get("command"),)):
@@ -2584,17 +2660,19 @@ def cmd_init(args):
             print("note: firecrawl's keyless tier is rate-limited; a key raises the limit")
             if ask_yesno("Provide a Firecrawl API key now?", False):
                 key = ask_required("  Firecrawl API key")
-                os.environ["FIRECRAWL_API_KEY"] = key
+                env_path = save_local_env_var("FIRECRAWL_API_KEY", key)
                 firecrawl_with_key = True
-                print("note: key kept in this process for apply — export FIRECRAWL_API_KEY "
-                      "for later re-applies (it is never written to the manifest)")
+                print(f"note: saved to {env_path} (gitignored) for later applies — "
+                      "never written to the manifest")
             else:
                 print("note: installing firecrawl keyless")
         elif os.environ.get("FIRECRAWL_API_KEY"):
             firecrawl_with_key = True
-            print("note: firecrawl will use FIRECRAWL_API_KEY from the environment")
+            print("note: firecrawl will use FIRECRAWL_API_KEY from the environment "
+                  f"(or {LOCAL_ENV_NAME})")
         else:
-            print("note: firecrawl enabled keyless (export FIRECRAWL_API_KEY before apply to raise limits)")
+            print(f"note: firecrawl enabled keyless (put FIRECRAWL_API_KEY in {LOCAL_ENV_NAME} "
+                  "or the environment before apply to raise limits)")
 
     if missing:
         print("init: missing required information for --auto mode:")
@@ -2903,6 +2981,7 @@ def interactive_menu(preset_manifest=None, profile=None):
 
 
 def main(argv=None):
+    load_local_env()
     ap = argparse.ArgumentParser(prog="multica-setup",
                                  description="Bootstrap a working Multica project team via the multica CLI. "
                                               "With no subcommand, runs the interactive menu.")

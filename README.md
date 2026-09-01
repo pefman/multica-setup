@@ -206,9 +206,10 @@ is theirs, the decisions are yours, and the board stays clean.
   a different set. Presets live in `templates/mcp/`; any
   `mcpServers`-format entry works as a custom server. Keys are referenced
   as `${ENV_VAR}` — never in the file. Interactive `init` asks for a
-  Firecrawl API key (default **N** = keyless); **Y** or `--auto` with
-  `FIRECRAWL_API_KEY` set wires `Bearer ${FIRECRAWL_API_KEY}` into the
-  firecrawl entry.
+  Firecrawl API key (default **N** = keyless); **Y** (or `--auto` with
+  the var set) wires `Bearer ${FIRECRAWL_API_KEY}` into the firecrawl
+  entry and saves the value to `.multica-setup.env` (gitignored,
+  auto-loaded on later runs).
 
 ## Requirements
 

@@ -1,0 +1,4 @@
+# Local secrets and machine state — never commit
+.multica-setup.env
+.env
+.multica-bootstrap-state.json
